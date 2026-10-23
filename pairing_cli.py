@@ -2,13 +2,14 @@
 import argparse
 import os
 from pairing import PairingStore
+from pairing_admin import configured_db
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("action", choices=["issue", "revoke"])
     parser.add_argument("--ttl", type=int, default=300)
     args = parser.parse_args()
-    db = os.environ.get("ASTER_PAIRING_DB", os.environ.get("ASTER_MCP_OAUTH_DB", "/var/lib/aster-universal-mcp/oauth.sqlite"))
+    db = configured_db(os.environ.get("ASTER_PAIRING_DB"))
     store = PairingStore(db)
     if args.action == "issue":
         print("One-time owner pairing code (show locally; never paste in ChatGPT):")

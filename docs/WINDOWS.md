@@ -41,6 +41,14 @@ The gateway listens only on 127.0.0.1:18767. A secure external HTTPS proxy/tunne
 
 The gateway inherits the privileges of its launching Windows account. If it is elevated, a correctly authorized Claude client can initiate powerful operations. Do not enable automatic administrative services until separately accepted.
 
+## Important: use the *same* database as your running gateway
+
+The code generator and HTTP gateway **must** use the exact same OAuth SQLite file. Running `pairing_admin.py issue` without `--db` on Windows is rejected rather than silently creating a different database.
+
+This documentation's standard example launches with `C:\ProgramData\AsterUniversalMCP\windows-oauth.sqlite`. **Our disposable Lenomila test VM is different:** its gateway uses `C:\Users\astertest\AsterClaudeBeta\state\windows-oauth.sqlite`. When diagnosing that VM, pass that precise path to `pairing_admin.py --db ... issue --ttl 900`.
+
+Issuing a second code invalidates the first immediately. The pairing code expires after its TTL; an outstanding OAuth authorization request has its own, shorter five-minute expiry. Restart OAuth authorization before pairing if you have been delayed. Preserve case and every character of the 43-character URL-safe code: `O` and `0`, or `l` and `1`, are different.
+
 ## Add to Claude Free
 
 1. Open Claude > Customize > Connectors > Add > Custom > Web.
