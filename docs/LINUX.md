@@ -111,3 +111,8 @@ You can revoke later with \`revoke CLIENT_ID\`. Never approve unexpected client 
 Run \`.venv/bin/python -m pip install -r requirements-dev.txt\` and \`.venv/bin/python -m pytest -q tests\` before connecting. During beta testing ask Claude to list the allowed directory, execute a harmless command such as \`id\`, and inspect a bounded background job. Review Claude's tool-use approval. If you discover unexpected behavior, remove the registered client ID from the allowlist, stop the gateway and revoke the OAuth client/tokens.
 
 **Limits:** Aster is powerful host-management software. Windows and Linux privilege behavior differs; localhost HTTP is not a substitute for correctly configured external HTTPS and OAuth. A real Claude Free end-to-end account test remains required before marking compatibility complete. Read [SECURITY.md](../SECURITY.md).
+
+
+### Simplified pairing for beta testers
+
+Run `sudo scripts/issue-pairing-linux.sh` to issue a 12-character code displayed in groups of four, valid for 15 minutes. The script uses `ASTER_MCP_OAUTH_DB` or the configured default and never calls a remote endpoint.

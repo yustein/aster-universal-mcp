@@ -56,3 +56,8 @@ This project is independent of Anthropic, Claude, OpenAI, and the MCP maintainer
 A fresh-machine Windows source build completed 118 Windows tests and 134 core tests (one skipped) in the engineering project before this release branch was isolated. This new *full remote OAuth* distribution requires its own end-to-end OAuth/privileged execution validation on **both** Windows and Linux before public release. Do not treat preliminary security unit-test results as equivalent to that final acceptance.
 
 Relevant official reference: [Claude custom remote MCP connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
+
+
+### Simplified pairing for beta testers
+
+Pairing codes are now 12 characters (formatted `XXXX-XXXX-XXXX`) using an unambiguous 32-symbol alphabet. Use the platform-local scripts in `scripts/` to issue codes. Generating a new code invalidates the prior code.

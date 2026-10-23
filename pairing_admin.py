@@ -41,7 +41,7 @@ def main():
     if args.command == "issue":
         code = store.issue(ttl_seconds=args.ttl)
         print("ONE-TIME CODE (keep private; expires in", args.ttl, "seconds):")
-        print(code)
+        print("-".join(code[i:i+4] for i in range(0, len(code), 4)))
         print("Code is NOT an MCP access token; it must be redeemed by the future OAuth pairing flow.")
     else:
         store.revoke()

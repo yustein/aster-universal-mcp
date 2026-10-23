@@ -7,6 +7,11 @@ import sqlite3
 import time
 from pathlib import Path
 
+# 32 unambiguous symbols: 12 characters provide 60 bits of entropy.
+PAIRING_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+PAIRING_LENGTH = 12
+
+
 class PairingStore:
     def __init__(self, db_path: str):
         self.db_path = str(db_path)
@@ -27,7 +32,7 @@ class PairingStore:
     def issue(self, ttl_seconds: int = 300) -> str:
         if not 30 <= ttl_seconds <= 900:
             raise ValueError("pairing lifetime must be 30..900 seconds")
-        code = secrets.token_urlsafe(32)
+        code = "".join(secrets.choice(PAIRING_ALPHABET) for _ in range(PAIRING_LENGTH))
         digest = hashlib.sha256(code.encode("ascii")).digest()
         with self._connect() as db:
             db.execute("DELETE FROM pairing")
@@ -38,7 +43,11 @@ class PairingStore:
     def consume(self, code: str) -> bool:
         if not isinstance(code, str) or len(code) > 256:
             return False
-        digest = hashlib.sha256(code.encode("utf-8")).digest()
+        # Human entry accepts spaces/hyphens and lowercase, but is otherwise strict.
+        code = code.replace("-", "").replace(" ", "").upper()
+        if len(code) != PAIRING_LENGTH or any(ch not in PAIRING_ALPHABET for ch in code):
+            return False
+        digest = hashlib.sha256(code.encode("ascii")).digest()
         with self._connect() as db:
             row = db.execute("SELECT digest,expires_at,attempts FROM pairing WHERE id=1").fetchone()
             if row is None:

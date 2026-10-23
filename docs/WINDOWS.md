@@ -79,3 +79,8 @@ To revoke, replace approve with revoke. OAuth pairing and a system:admin token a
 In Claude, test whoami, a disposable background job, cancellation, and a small transfer inside a test directory. Review every tool invocation. **Do not test on real customer or production files.**
 
 Security: [SECURITY.md](../SECURITY.md). These source and SDK tests are not a substitute for a real Claude Free OAuth connection, verified HTTPS public ingress, service deployment review, or a third-party privileged-execution audit.
+
+
+### Simplified pairing for beta testers
+
+On the test Windows VM, double-click `scripts\issue-pairing-windows.cmd` from the source tree (or copy it to the Desktop). It issues a 12-character code displayed in groups of four, valid for 15 minutes, against the same OAuth database.
