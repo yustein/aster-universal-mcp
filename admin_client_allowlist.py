@@ -30,7 +30,7 @@ def _read_allowlist(path: Path) -> list[str]:
         raise PermissionError("refusing symlink allowlist")
     if not path.exists():
         return []
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = json.loads(path.read_text(encoding="utf-8-sig"))
     if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
         raise ValueError("invalid allowlist")
     return value

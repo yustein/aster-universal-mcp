@@ -24,7 +24,7 @@ def create_app():
             raise PermissionError("authenticated client required")
         if "system:admin" not in token.scopes:
             raise PermissionError("administrator OAuth scope required")
-        with open(os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json"), encoding="utf-8") as f:
+        with open(os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json"), encoding="utf-8-sig") as f:
             allowed = json.load(f)
         if token.client_id not in allowed:
             raise PermissionError("administrator client not authorized")

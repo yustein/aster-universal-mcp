@@ -38,7 +38,7 @@ def create_app():
                 raise PermissionError("administrator OAuth scope required")
             import json
             allowlist_path = Path(os.environ["ASTER_WINDOWS_ADMIN_CLIENTS"])
-            allowed = json.loads(allowlist_path.read_text(encoding="utf-8"))
+            allowed = json.loads(allowlist_path.read_text(encoding="utf-8-sig"))
             if not isinstance(allowed, list) or token.client_id not in allowed:
                 raise PermissionError("administrator client not authorized")
             return token

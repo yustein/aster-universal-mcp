@@ -20,7 +20,7 @@ def test_windows_oauth_requires_trusted_https_proxy_and_bearer(tmp_path, monkeyp
     origin = "https://mcp.example.invalid"
     db = tmp_path / "windows-oauth.sqlite"
     allowlist = tmp_path / "allowlist.json"
-    allowlist.write_text("[]", encoding="utf-8")
+    allowlist.write_text("[]", encoding="utf-8-sig")
     monkeypatch.setenv("ASTER_WINDOWS_PUBLIC_ORIGIN", origin)
     monkeypatch.setenv("ASTER_WINDOWS_OAUTH_DB", str(db))
     monkeypatch.setenv("ASTER_WINDOWS_ADMIN_CLIENTS", str(allowlist))
@@ -71,7 +71,7 @@ def test_windows_oauth_requires_trusted_https_proxy_and_bearer(tmp_path, monkeyp
                 assert before_approval.status_code == 403 or (
                     "error" in before_approval.text.lower()
                 )
-                allowlist.write_text(json.dumps([cid]), encoding="utf-8")
+                allowlist.write_text(json.dumps([cid]), encoding="utf-8-sig")
                 allowed = await http.post(
                     "/mcp", json=payload, headers=authenticated
                 )
