@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--source", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
-    parser.add_argument("--version", default="0.1.0b2")
+    parser.add_argument("--version", default="0.1.0b3")
     args = parser.parse_args()
     root, output = args.source.resolve(), args.output.resolve()
     if not re.fullmatch(r"[0-9a-f]{40}", args.source_commit):

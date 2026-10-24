@@ -1,11 +1,12 @@
 """Authenticated MCP application. Loopback-only behind a trusted TLS proxy."""
 import os
-import json
-from mcp.server.auth.middleware.auth_context import get_access_token
+from pathlib import Path
 import uvicorn
 from mcp.server.transport_security import TransportSecuritySettings
+from mcp.server.mcpserver.exceptions import ToolError
 from oauth_runtime import build_oauth_server
-from filesystem import list_directory as enumerate_directory
+from filesystem import DirectoryAccessDenied, list_directory as enumerate_directory
+from tool_access import current_client_access, connection_status as describe_connection
 from admin_client import run_admin, start_admin_job, get_admin_job, cancel_admin_job, begin_upload as admin_begin_upload, upload_chunk as admin_upload_chunk, finish_upload as admin_finish_upload, download_info as admin_download_info, download_chunk as admin_download_chunk
 from proxy_security import PublicOriginGate
 from oauth_http_diagnostics import OAuthHTTPDiagnostics
@@ -19,21 +20,32 @@ def create_app():
         raise ValueError("absolute paths required")
     if not os.path.isdir(root) or not os.path.isdir(workspace):
         raise ValueError("allowed root or workspace missing")
+    root, workspace = os.path.realpath(root), os.path.realpath(workspace)
+    allowlist = os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json")
     def require_admin():
-        token = get_access_token()
-        if token is None:
-            raise PermissionError("authenticated client required")
-        if "system:admin" not in token.scopes:
-            raise PermissionError("administrator OAuth scope required")
-        with open(os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json"), encoding="utf-8-sig") as f:
-            allowed = json.load(f)
-        if token.client_id not in allowed:
-            raise PermissionError("administrator client not authorized")
+        current_client_access(allowlist).require_admin()
     def register(server):
         @server.tool()
+        def connection_status() -> dict:
+            """Show this authenticated client's administrative approval and path policy; never grants access."""
+            return describe_connection(current_client_access(allowlist), platform="linux",
+                                       default_workspace=workspace, listing_base=root)
+        @server.tool()
         def list_directory(path: str=".", limit: int=100)->dict:
-            """List within the configured root. Authentication is required; the administrative allowlist is not."""
-            return enumerate_directory(path,root=root,limit=limit)
+            """List from the configured listing root; an approved client may use absolute host paths. Bounded sample, unknown total if truncated."""
+            access = current_client_access(allowlist)
+            unconfined = access.admin_approved and Path(path).is_absolute()
+            try:
+                return enumerate_directory(path, root=None if unconfined else root,
+                                           base=root, limit=limit)
+            except DirectoryAccessDenied:
+                if not access.admin_approved:
+                    raise access.approval_required() from None
+                raise ToolError(
+                    "LISTING_PATH_OUTSIDE_ROOT: Relative listing paths stay within "
+                    "the configured listing root. This approved client may use an "
+                    "explicit absolute path for a directory elsewhere on the host."
+                ) from None
         @server.tool()
         def run_command(command: list[str], cwd: str = ".", timeout: int = 5) -> dict:
             """Execute commands through the local administrator executor with audit. Use an absolute cwd for full server access."""

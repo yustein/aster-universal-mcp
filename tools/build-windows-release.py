@@ -43,7 +43,7 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True,
                         help="Outside source or beneath an excluded artifacts directory")
     parser.add_argument("--base-commit", required=True)
-    parser.add_argument("--version", default="0.1.0b1")
+    parser.add_argument("--version", default="0.1.0b3")
     args = parser.parse_args()
     root, output = args.source.resolve(), args.output.resolve()
     if not re.fullmatch(r"[0-9a-f]{40}", args.base_commit):

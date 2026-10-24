@@ -14,6 +14,79 @@ from oauth_codes import AuthorizationCodeStore
 from approval_sessions import ApprovalSessions
 from pairing import PairingStore
 import os
+from pathlib import Path
+import shlex
+
+
+def onboarding_head(title):
+    return ("<head><meta charset='utf-8'><meta name='viewport' content='width=device-width, initial-scale=1'>"
+            "<title>" + escape(title) + "</title><style>"
+            "body{font:16px/1.55 system-ui,sans-serif;max-width:760px;margin:2rem auto;padding:0 1rem;color:#17212b}"
+            "section{border-top:1px solid #ccd3dc;margin-top:2rem;padding-top:1rem}"
+            "pre,code,dd{overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#f0f3f6;padding:.8rem;border-radius:.4rem}"
+            "dd{margin:0 0 .7rem}dt{font-weight:600}input,button{font:inherit;padding:.65rem;max-width:100%;box-sizing:border-box}"
+            "button{margin:.6rem 0;cursor:pointer}h1,h2{line-height:1.2}"
+            "</style></head>")
+
+
+def administrator_onboarding(record):
+    """Explain this client's local grant without changing OAuth or permission state."""
+    from mcp.server.mcpserver.exceptions import ToolError
+    from tool_access import read_admin_allowlist
+
+    windows = os.name == "nt" or bool(os.environ.get("ASTER_WINDOWS_ADMIN_CLIENTS"))
+    client_id = record["client_id"]
+    if windows:
+        allowlist = os.environ.get("ASTER_WINDOWS_ADMIN_CLIENTS")
+        terminal = "an elevated PowerShell terminal in your extracted Aster folder"
+        prefix = ("powershell.exe -NoProfile -ExecutionPolicy Bypass -File "
+                  ".\\scripts\\manage-client-windows.ps1 -Action ")
+        inspect_command = prefix + "clients"
+        approve_command = prefix + "approve -ClientId '" + client_id.replace("'", "''") + "'"
+        command_tool = "execute_command"
+        sample = r'{"command":["C:\\Windows\\System32\\hostname.exe"]}'
+    else:
+        allowlist = os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json")
+        state = str(Path(allowlist).parent)
+        prefix = ("sudo /usr/bin/python3 " + shlex.quote(str(Path(state) / "operator-linux.py"))
+                  + " --state " + shlex.quote(state) + " ")
+        terminal = "a local administrator terminal on your Aster server"
+        inspect_command = prefix + "clients"
+        approve_command = prefix + "approve " + shlex.quote(client_id)
+        command_tool = "run_command"
+        sample = '{"command":["/bin/hostname"]}'
+    try:
+        if not allowlist:
+            raise ToolError("AUTHORIZATION_STATE_UNAVAILABLE")
+        approved = client_id in read_admin_allowlist(allowlist)
+    except ToolError:
+        status = "authorization_state_unavailable"
+        heading = "Administrator permission could not be checked"
+        detail = ("Ask the local operator to inspect Aster's protected authorization state. "
+                  "Do not recreate it or assume this client is approved.")
+    else:
+        status = "approved" if approved else "approval_required"
+        heading = "Administrator permission granted" if approved else "Administrator approval required"
+        detail = ("This client has a local administrator grant. Verify an actual command before declaring setup complete."
+                  if approved else "OAuth pairing connects your account. Commands, jobs and file transfers also require a separate local administrator grant.")
+    return ("<section aria-labelledby='administrator-approval' data-admin-status='" + status + "'>"
+            "<h2 id='administrator-approval'>" + heading + "</h2><p>" + detail + "</p>"
+            "<p>Finish the OAuth connection and return to your client promptly. "
+            "You can complete the local approval step afterwards; do not wait for it on this expiring page.</p>"
+            "<p>Match this exact client ID and callback in " + terminal + ":</p>"
+            "<dl><dt>Client ID</dt><dd><code>" + escape(client_id) + "</code></dd>"
+            "<dt>Callback</dt><dd><code>" + escape(record["redirect_uri"]) + "</code></dd></dl>"
+            "<pre>" + escape(inspect_command) + "</pre>"
+            "<p>If this is your intended client and it still needs approval, run:</p>"
+            "<pre>" + escape(approve_command) + "</pre>"
+            "<p>This grants administrator access to this client. Approve only a registration you recognize. "
+            "A new pairing code is not needed just to grant this permission.</p>"
+            "<p>In your AI client, call <code>connection_status</code> with no arguments. "
+            "Once it reports <code>admin_approved: true</code>, call <code>" + command_tool + "</code> with:</p>"
+            "<pre>" + escape(sample) + "</pre>"
+            "<p>Leave <code>cwd</code> omitted. Require <code>status: completed</code>, "
+            "<code>exit_code: 0</code> and the expected hostname. A connected account or approved status alone "
+            "does not verify command execution.</p></section>")
 
 def _valid_browser_origin(request):
     """Allow exact Origin or strict same-origin Fetch Metadata + HTTPS Referer."""
@@ -52,11 +125,10 @@ def owner_approval_app(db_path: str):
         message = ("<p role='alert' data-error='invalid_or_expired_code'>"
                    "That code was not accepted. Enter the current code generated "
                    "on this server. You can retry using the form below.</p>") if error else ""
-        body=("<!doctype html><html><head><meta charset='utf-8'>"
-              "<title>Aster MCP pairing</title></head><body>"
+        body=("<!doctype html><html>" + onboarding_head("Aster MCP pairing") + "<body>"
               "<h1>Connect your MCP client</h1>"
               "<p>Client: "+escape(record["client_id"])+"</p>"
-              "<p>Permissions: "+escape(record["scope"])+"</p>"
+              "<p>Requested OAuth scope: "+escape(record["scope"])+"</p>"
               +message+
               "<p>Enter the one-time code generated locally on your server.</p>"
               "<p>This connection request expires in "+str(remaining)+" seconds. "
@@ -65,7 +137,8 @@ def owner_approval_app(db_path: str):
               "<input type='hidden' name='request_id' value='"+escape(rid,quote=True)+"'>"
               "<input type='hidden' name='nonce' value='"+escape(nonce,quote=True)+"'>"
               "<label>Pairing code <input name='pairing_code' type='password' required autocomplete='off'></label>"
-              "<button type='submit'>Approve connection</button></form>"
+              "<button type='submit'>Approve OAuth connection</button></form>"
+              +administrator_onboarding(record)+
               "</body></html>")
         response=HTMLResponse(body,status_code=403 if error else 200,headers={
             "Cache-Control":"no-store",
@@ -96,14 +169,15 @@ def owner_approval_app(db_path: str):
         nonce = sessions.issue_completion(rid,browser) if browser else None
         if nonce is None:
             return JSONResponse({"error":"browser_session_required"},status_code=403)
-        body = ("<!doctype html><html><head><meta charset='utf-8'></head><body>"
-                "<h1>Owner approved this connection</h1>"
+        body = ("<!doctype html><html>" + onboarding_head("Finish Aster OAuth pairing") + "<body>"
+                "<h1>Owner approved the OAuth connection</h1>"
                 "<form method='post' action='/pair/complete'>"
                 "<input type='hidden' name='request_id' value='" + escape(rid, quote=True) + "'>"
                 "<input type='hidden' name='nonce' value='" + escape(nonce, quote=True) + "'>"
-                "<button type='submit'>Continue to client</button></form></body></html>")
+                "<button type='submit'>Continue to client</button></form>"
+                +administrator_onboarding(record)+"</body></html>")
         return HTMLResponse(body, headers={"Cache-Control":"no-store",
-            "Content-Security-Policy":"default-src 'none'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+            "Content-Security-Policy":"default-src 'none'; form-action 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
             "Referrer-Policy":"same-origin"})
 
     async def redeem(request):
@@ -166,17 +240,16 @@ def owner_approval_app(db_path: str):
         # Provide an explicit user-initiated HTTPS link instead.
         if urlsplit(callback).scheme != "https" or callback.split("?")[0] != approved["redirect_uri"].split("?")[0]:
             return JSONResponse({"error":"unsupported_callback_host"},status_code=403)
-        body=("<!doctype html><html><head><meta charset='utf-8'>"
-              "<meta name='referrer' content='no-referrer'>"
-              "<title>Return to MCP client</title></head><body>"
-              "<h1>Authorization complete</h1>"
+        body=("<!doctype html><html>" + onboarding_head("Return to MCP client") + "<body>"
+              "<h1>OAuth pairing complete</h1>"
               "<p>Follow this link to finish connecting your MCP client.</p>"
               "<a href='"+escape(callback,quote=True)+"'>Return to MCP client</a>"
+              +administrator_onboarding(approved)+
               "</body></html>")
         return HTMLResponse(body,status_code=200,headers={
             "Cache-Control":"no-store",
             "Referrer-Policy":"no-referrer",
-            "Content-Security-Policy":"default-src 'none'; base-uri 'none'; frame-ancestors 'none'"})
+            "Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'"})
 
     return Starlette(routes=[Route("/pair/authorize",status,methods=["GET"]),
                              Route("/pair/complete",complete,methods=["POST"]),

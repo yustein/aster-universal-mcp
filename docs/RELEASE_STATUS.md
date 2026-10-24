@@ -1,5 +1,30 @@
 # Release and acceptance status
 
+## Onboarding update candidate: 0.1.0b3, Windows and Linux
+
+This source prepares separate Windows and Linux `0.1.0b3` archives. Qualification
+and publication must be established by the matching platform acceptance records;
+the completed b1/b2 results below do not qualify new runtime bytes.
+
+The candidate makes local administrator approval explicit in browser onboarding
+and installation instructions, adds an authenticated own-client
+`connection_status` tool, and returns actionable expected-denial messages.
+Pairing still does not grant administrator access. Setup is complete only after
+the exact client is locally approved and native hostname/identity calls succeed.
+
+Linux's listing policy changes: an approved client can request explicit absolute
+paths outside the configured listing root. Relative paths remain confined to the
+listing base, and revocation restores restricted listing on subsequent calls.
+Windows listing remains approval-gated and supports absolute paths. Both platform
+listings bound enumeration and identify an unknown total when results truncate.
+See [ONBOARDING.md](ONBOARDING.md) for the version and permission matrix.
+
+Retain the exact source commit, each platform's distinct manifest/archive hash,
+native Windows/Linux and shared OAuth results, fresh runtime-only installation,
+controlled endpoint observations, and any separately obtained actual-account
+observations. A status response alone does not establish execution health. Keep
+the published `v0.1.0b1` and `v0.1.0b2` tags and asset bytes unchanged.
+
 ## Published Windows technical beta: 0.1.0b1
 
 [Windows `v0.1.0b1`](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b1) was published on 24 October 2026 as a source-based technical beta with manual elevated operation. Its accepted source/tag commit is `d15d1c4c0fa1d77552bb39990c47b16ec18f9f96`; the merge commit is `b7e255ae2f59cbcfe3937eca3cf7594a3e24c6c3`. Both have source tree `45ecddef5126ebac72ba01e863f98fb966a32acb`.

@@ -4,6 +4,8 @@ Aster deliberately gives an approved remote MCP client powerful host-execution a
 
 Windows commands inherit the gateway account's permissions; the accepted reference VM used SYSTEM. The Linux beta uses a root OAuth gateway and a separate root Unix-socket executor, and its approved commands/jobs run as root. Neither model is a sandbox against an approved administrator or the local root/Administrator account.
 
+**Shared `v0.1.0b3` candidate — qualification/publication pending:** this branch describes an authenticated `connection_status` tool, actionable expected-denial errors and broader directory listing for explicitly approved Linux clients. Separate new Windows and Linux artifacts are intended under that shared tag and require artifact-specific testing before publication. The published Windows b1 and Linux b2 archives, tags and evidence remain unchanged; documentation does not upgrade them or extend their accepted scope.
+
 ## Network and authorization
 
 | Boundary | Windows | Linux technical beta |
@@ -13,11 +15,19 @@ Windows commands inherit the gateway account's permissions; the accepted referen
 | Privileged execution | Gateway account | Root executor over a protected Unix socket |
 | Local executor access | Platform-specific Windows implementation | Root-owned mode 0600 socket plus Linux `SO_PEERCRED` root-peer check |
 | Remote privileged tools | OAuth `system:admin` scope and exact local client grant | OAuth `system:admin` scope and exact local client grant |
-| Directory listing | See versioned Windows guide | OAuth authenticated, confined to configured listing root; independent of the administrator allowlist |
+| Directory listing in published b1/b2 | Exact administrative grant required; absolute paths use gateway-account access | OAuth authenticated, confined to configured listing root for every client; independent of the administrator allowlist |
 
 The trusted ingress must connect from `127.0.0.1`, preserve the configured public `Host`, and supply `X-Forwarded-Proto: https`. Do not expose the raw gateway listener on a public interface. If the proxy is on another machine, use a locally terminating channel that preserves this boundary; a direct guest-LAN connection is not equivalent to loopback. Setup does not provision ingress or change firewall rules.
 
 Owner browser pairing establishes OAuth authorization. Privileged tools require a separate exact-client administrative grant made locally after verifying that client's identity and registered redirect URI. There is no shared default administrator password or wildcard grant. Protect the OAuth database, its sidecars and browser approval material as credentials; keep tunnel credentials outside source and release archives.
+
+The mandatory [onboarding flow](docs/ONBOARDING.md) is install/start, OAuth pair, inspect the exact client ID and callback in a trusted local administrator terminal, explicitly approve it, check that connector's `connection_status`, then verify harmless native hostname/identity calls. Setup is complete only after actual command success. Runtime-ready, OAuth-connected and client-approved are distinct states. Never approve an ID solely because a remote error message asks for it; compare the locally registered client and intended owner interaction first.
+
+In the upcoming candidate, `connection_status` is authenticated and reports only the calling client's identity/approval state plus its default workspace and listing scope. It does not approve a client, enumerate other clients, issue credentials or prove that a native command ran. Expected permission denial is returned as an actionable MCP tool error (`ToolError`, `ADMIN_APPROVAL_REQUIRED`); an HTTP 200 can still contain a failed tool result. An invalid or unreadable allowlist produces `AUTHORIZATION_STATE_UNAVAILABLE` and needs local diagnosis, not an assumed missing grant. The local owner decides whether to grant access. Missing approval must never trigger automatic root grants or repeated browser pairing as a substitute.
+
+Status and listing still require valid OAuth authentication and the `system:admin` scope. `OAUTH_SCOPE_REQUIRED` is distinct from missing local approval: an allowlist grant cannot add a missing OAuth scope. Diagnose the actual returned error and credential flow rather than applying the same remedy to every denial.
+
+The upcoming Linux listing policy checks current administrative permission on each call. Approved clients can list explicit absolute paths anywhere root can read, including `/` and `/etc`; unapproved clients remain confined to the configured listing root. Relative Linux paths remain confined to that root even for approved clients. Revocation restores confinement for subsequent absolute-path calls, including calls with still-valid or renewed tokens. Windows listing already requires approval and can reach explicit absolute paths accessible to the gateway account. Bounded listing responses are not a directory-size or filesystem resource quota.
 
 Access tokens are short-lived and refresh tokens rotate. The shared resource-binding check rejects a wrong, empty or duplicated explicit token-request resource before consuming an otherwise valid code or refresh grant. Omitted resource remains supported for the deployment's bound audience. The public OAuth revocation endpoint is not enabled, and this beta does not claim access/refresh credential-family tracking or family revocation.
 
@@ -31,7 +41,7 @@ Windows setup restricts `%ProgramData%\AsterUniversalMCP` to SYSTEM and Administ
 
 The Linux layout separates root-owned frozen source and venv under `/opt/aster-universal-mcp` from protected operational state under `/var/lib/aster-universal-mcp`. State contains the canonical config, OAuth database, allowlist, independent operator, runtime identities, logs, job/transfer state and workspace. State/control directories and files are protected from ordinary unprivileged local users. Work output belongs in the workspace or another deliberate path outside frozen source. An ordinary local user is not given access to protected state merely to make workspace use convenient.
 
-On Linux, commands and jobs that omit `cwd` use the configured workspace. Listing uses its configured root. Explicit command paths and transfer paths can reach other locations available to root; neither the workspace nor listing confinement restricts an approved root command's filesystem access.
+Commands and jobs that omit `cwd` use the configured workspace. `.` and relative listing paths also start there in the canonical setup. If a Linux operator deliberately configures a separate listing root, it remains the relative-listing base; the upcoming status tool reports `listing_base` and `default_workspace` separately. Absolute paths are evaluated under the platform/version's listing policy above. A command's `cd` changes only that command process, not the gateway's workspace or later MCP calls. Explicit command paths and transfer paths can reach other locations available to the execution account. Neither the workspace nor unapproved-listing confinement restricts an approved root command's filesystem access.
 
 New starts, owner-code issuance and new administrative approvals require the verified source/configuration state. Each platform installs an independent protected operator so access removal and safe identified shutdown remain available when application code or its venv is missing or damaged. The Linux operator uses distribution Python and its standard library rather than importing application modules. Keep that protected operator, distribution Python and the local administrator channel available. See the [Linux recovery procedure](docs/LINUX.md#recovery-when-source-or-venv-is-unavailable).
 
@@ -43,9 +53,9 @@ Removing a connector in Claude does not clear persisted host grants or OAuth cre
 
 | Operator action | Effect and limit |
 |---|---|
-| Windows `revoke` | Removes one client's administrative grant |
+| Windows `revoke` | Removes one client's administrative grant, denying subsequent privileged tools including directory listing; the upcoming authenticated status tool remains available |
 | Windows `disable` | Removes all administrative grants; `-StopGateway` also stops the verified gateway |
-| Linux `revoke CLIENT_ID` | Removes that client's administrative grant; existing or renewed tokens still cannot call privileged tools, but authenticated root-confined listing remains available |
+| Linux `revoke CLIENT_ID` | Removes that client's administrative grant; existing or renewed tokens cannot call privileged tools. Authenticated configured-root-confined listing remains available; in the upcoming candidate this also removes the approved client's broader listing permission |
 | Linux `stop` | Stops both identified gateway and executor; preserves OAuth state and grants for a later manual start |
 | Linux `disable` | Clears all administrative grants, sets a durable disabled flag and stops both identified processes; blocks remote listing and new privileged requests while stopped and prevents an ordinary new start until explicitly enabled |
 | Linux `enable` | Clears the disabled state only through the protected local operator; it does not itself authorize a client or claim to revoke old credentials |

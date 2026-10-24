@@ -11,14 +11,20 @@ sys.path.insert(0, str(ROOT))
 
 def create_app():
     from mcp.server.transport_security import TransportSecuritySettings
-    from mcp.server.auth.middleware.auth_context import get_access_token
     from oauth_runtime import build_oauth_server
+    from filesystem import list_directory as enumerate_directory
+    from tool_access import current_client_access, connection_status as describe_connection
     origin = os.environ["ASTER_WINDOWS_PUBLIC_ORIGIN"]
     os.environ["ASTER_MCP_PUBLIC_ORIGIN"] = origin
     database = Path(os.environ["ASTER_WINDOWS_OAUTH_DB"])
     if not database.is_absolute():
         raise ValueError("absolute database path required")
     database.parent.mkdir(parents=True, exist_ok=True)
+    workspace = Path(os.environ.get("ASTER_WINDOWS_WORKSPACE", os.getcwd()))
+    if not workspace.is_absolute() or not workspace.is_dir():
+        raise ValueError("absolute existing workspace required")
+    workspace = str(workspace.resolve(strict=True))
+    allowlist_path = Path(os.environ["ASTER_WINDOWS_ADMIN_CLIENTS"])
     from executor import run_command
     from job_launcher import start_job
     from jobs import job_status
@@ -29,35 +35,27 @@ def create_app():
 
     def register(mcp):
         def authenticated():
-            token = get_access_token()
-            if token is None:
-                raise PermissionError("authentication required")
-            if "system:admin" not in token.scopes:
-                raise PermissionError("administrator OAuth scope required")
-            import json
-            allowlist_path = Path(os.environ["ASTER_WINDOWS_ADMIN_CLIENTS"])
-            allowed = json.loads(allowlist_path.read_text(encoding="utf-8-sig"))
-            if not isinstance(allowed, list) or token.client_id not in allowed:
-                raise PermissionError("administrator client not authorized")
-            return token
+            current_client_access(allowlist_path).require_admin()
+        @mcp.tool()
+        def connection_status() -> dict:
+            """Show this authenticated client's administrative approval and path policy; never grants access."""
+            return describe_connection(current_client_access(allowlist_path), platform="windows",
+                                       default_workspace=workspace, listing_base=workspace)
         @mcp.tool()
         def list_directory(path: str = ".") -> dict:
-            """List a directory; relative paths use the configured default workspace."""
+            """List up to 100 names with administrative approval. Relative paths use the default workspace; absolute host paths are supported."""
             authenticated()
-            folder = Path(path).resolve()
-            if not folder.is_dir():
-                raise ValueError("not a directory")
-            return {"path": str(folder), "entries": [p.name for p in list(folder.iterdir())[:100]]}
+            return enumerate_directory(path, base=workspace, limit=100, names_only=True)
         @mcp.tool()
         def execute_command(command: list[str], cwd: str = ".", timeout: int = 30) -> dict:
             """Run a command; omitted cwd uses the default workspace outside application source."""
             authenticated()
-            return run_command(command, cwd, timeout)
+            return run_command(command, str(Path(workspace) / cwd), timeout)
         @mcp.tool()
         def start_background_job(command: list[str], cwd: str = ".", max_runtime: int = 3600) -> dict:
             """Start a bounded job; omitted cwd uses the configured default workspace."""
             authenticated()
-            return start_job(command, cwd, max_runtime)
+            return start_job(command, str(Path(workspace) / cwd), max_runtime)
         @mcp.tool()
         def background_job_status(job_id: str) -> dict:
             authenticated()
