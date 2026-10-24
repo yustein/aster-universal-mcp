@@ -1,12 +1,12 @@
 # Security boundaries — privileged administration beta
 
-Aster deliberately gives an approved remote MCP client powerful host-execution and file-access tools. Install it only on a machine you own and control, begin on a disposable machine, and retain an independent local administrator session. Windows `0.1.0b1` is the published technical beta. Linux `0.1.0b2` is a separate candidate whose required evidence is tracked in [release status](docs/RELEASE_STATUS.md); this security description is not acceptance or an independent audit.
+Aster deliberately gives an approved remote MCP client powerful host-execution and file-access tools. Install it only on a machine you own and control, begin on a disposable machine, and retain an independent local administrator session. Windows `0.1.0b1` and the separate [Linux `0.1.0b2`](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2) are technical betas published on 24 October 2026. Linux qualification is limited to the documented Ubuntu 24.04 LTS x86_64/Python 3.12 manual deployment and its exact acceptance artifact. [Release status](docs/RELEASE_STATUS.md) separates the evidence layers; this security description is not an independent audit.
 
-Windows commands inherit the gateway account's permissions; the accepted reference VM used SYSTEM. The Linux candidate uses a root OAuth gateway and a separate root Unix-socket executor, and its approved commands/jobs run as root. Neither model is a sandbox against an approved administrator or the local root/Administrator account.
+Windows commands inherit the gateway account's permissions; the accepted reference VM used SYSTEM. The Linux beta uses a root OAuth gateway and a separate root Unix-socket executor, and its approved commands/jobs run as root. Neither model is a sandbox against an approved administrator or the local root/Administrator account.
 
 ## Network and authorization
 
-| Boundary | Windows | Linux candidate |
+| Boundary | Windows | Linux technical beta |
 |---|---|---|
 | Gateway | IPv4 loopback, default `127.0.0.1:18767` | IPv4 loopback, canonical setup default `127.0.0.1:18768` |
 | Public ingress | Owner-controlled HTTPS proxy/tunnel | Separate owner-controlled HTTPS proxy/tunnel |
@@ -57,7 +57,7 @@ Stopping the gateway/executor or removing grants does not automatically undo fil
 
 ## Linux command and job limits
 
-The Linux candidate launches commands and background jobs in transient systemd services. A functioning system systemd manager, `systemd-run`, `systemctl` and `/proc` are runtime prerequisites even with manual gateway/executor startup. Unit/cgroup ownership is used to contain descendants, including children that create another session, and to verify lifecycle completion. The exact timeout, cancellation and interrupted-state guarantees must be supported by the candidate's native evidence.
+The Linux beta launches commands and background jobs in transient systemd services. A functioning system systemd manager, `systemd-run`, `systemctl` and `/proc` are runtime prerequisites even with manual gateway/executor startup. Unit/cgroup ownership is used to contain descendants, including children that create another session, and to verify lifecycle completion. The exact timeout, cancellation and interrupted-state guarantees must be supported by the candidate's native evidence.
 
 Each stdout/stderr response reads at most the first 16 KiB of captured bytes, decoded as text. Replacement characters and JSON escaping can increase encoded wire size. Captured stdout/stderr storage is bounded to 1 MiB per stream, with excess drained and discarded. Read the result's truncation/limit fields; interrupted capture can leave byte-observation metadata unavailable. These limits do not impose a general CPU, memory, filesystem, network or aggregate retained-job quota. A command can write its own files or consume other root-accessible resources. Recorded limits and bounded test workloads do not qualify arbitrary adversarial workloads or unlimited retention.
 

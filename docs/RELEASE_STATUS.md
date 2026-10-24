@@ -17,7 +17,25 @@ The accepted manifest SHA-256 is `9d964aa0f01014de5032c28967c07475f1901281d30075
 
 The reference system was Windows 11 Enterprise Evaluation 26H2 build 26300.9457, Python 3.11.9 x64, manually launched with SYSTEM privileges. The account screenshot contains Claude-rendered result text; full request UUIDs are cropped and no raw MCP transcript or exact full-UUID server correlation is claimed. Earlier RC2 results and failed candidates remain historical evidence, not additional final test counts. Windows `v0.1.0b1` and its published bytes remain unchanged by the separate Linux work.
 
-## Linux technical beta: 0.1.0b2
+## Published Linux technical beta: 0.1.0b2
+
+[Linux `v0.1.0b2`](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2) was published on 24 October 2026 for Ubuntu 24.04 LTS x86_64, distribution Python 3.12, a functioning system systemd manager with cgroup v2, and manual gateway/executor startup. The tested source commit is `c2ec9ce1d258d80c4922c190212ff5681f05c128`, source tree `8e5f7d653c1803d286c9295fb89b61d6c570ca44`, manifest SHA-256 `c6dc45c5d2d73ad8e74ab43c92849fe8c9a9cc8003edbf11fdc863c3d81be1b4`, and source archive SHA-256 `f879eccf69aec995eaccfb14cc895cb3bdd762bdca190b8e4875b1e1c77e3887` (133,177 bytes).
+
+The release tag identifies that tested source commit. The recorded main-branch merge is `f440cacd156de931b70304f0793492c85ce849ce`, with the same source tree. Later documentation commits on main do not replace the tested commit or its archive.
+
+| Evidence layer | Final Linux candidate result |
+|---|---|
+| Portable regression | 94 tests plus 7 subtests passed; 23 skips; exact source/archive receipt and clean inventory |
+| Native Linux | 107 tests plus 7 subtests passed; 10 Windows-only skips; source unchanged |
+| Fresh runtime-only installation/recovery | 10 passed stages; independent operator recovered with application source and venv unavailable |
+| Controlled public HTTPS | 24 passed stages; native effects, 41,031-byte exact transfer, process-tree lifecycle, refresh, manual restart, removed-grant semantics and cleanup |
+| Actual Claude account | Three owner-reported separate hostname/id/whoami successes, cwd omitted, exit 0; matching retained server stdout spools and audit/job joins corroborate activity on the unchanged candidate |
+| Final cleanup | Three identified acceptance jobs preserved as private evidence; two later unrelated completed jobs and the intended real client approval preserved; no pending lifecycle operation |
+| Publication | All 10 Linux release assets downloaded without authentication and hash-verified; all six Windows asset bytes unchanged. The release body and project handoff record the tag/source/tree relationship and verification details |
+
+Actual-account success evidence consists of owner-supplied text and server records, without a success screenshot or raw Claude protocol transcript. Stored stdout for the three matched results is 18, 39 and 5 bytes including newline, with zero stderr. Executor records retain no original argv/cwd or OAuth client identity, so exact Claude invocation/client UUID correlation is not claimed. Approved commands may use any existing absolute cwd, including `/`; only `list_directory` is confined to its configured root, independently of the admin allowlist. The successful omitted-cwd calls do not establish an identical replay of earlier calls with other arguments. No actual-account transfer or file-write test is claimed.
+
+The fresh reference guest reported Ubuntu 24.04.5 LTS, kernel 6.8.0-147-generic, Python 3.12.3 and systemd 255.4-1ubuntu8.18. Test counts overlap and are not summed. Earlier failed harness attempts and their diagnosis remain retained. These dated results concern the exact frozen artifact; later documentation corrections on main do not create a new runtime candidate or change the release tag/archive.
 
 The Linux artifact's qualification is recorded in its separate `linux-beta-0.1.0b2-acceptance.json` and test-evidence release assets. Those files are written after the source archive is frozen, so evidence does not change the candidate being tested. If the acceptance asset is absent, incomplete or identifies different bytes, do not treat that artifact as qualified.
 

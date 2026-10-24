@@ -22,7 +22,7 @@ The reference test environment is Windows 11 Enterprise Evaluation 26H2 build 26
 
 ## Get the Linux beta
 
-Use the Linux prerelease assets on the [Releases page](https://github.com/yustein/aster-universal-mcp/releases):
+Use the matching [Linux `v0.1.0b2` prerelease](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2), published on 24 October 2026:
 
 - `aster-universal-mcp-0.1.0b2-linux.tar.gz` — frozen source, POSIX file modes and target-derived Linux dependency locks.
 - `candidate-manifest.json` and `SHA256SUMS.txt` — exact source commit/tree and file/archive identity.
@@ -50,13 +50,13 @@ Use **Sign in now** and **Register automatically** when adding Aster. The host o
 | Local recovery | Protected operator commands to revoke, disable access and stop the verified gateway |
 | Deployment | Source archive, repository-local Python environment, manual foreground or background launch |
 
-The [Linux candidate](docs/LINUX.md) runs a root OAuth gateway and a separate root Unix-socket executor. It requires a functioning systemd manager for command/job containment even when both long-running processes are started manually. Administrative grant removal blocks privileged Linux tools; authenticated directory listing remains confined to its configured root and does not use that allowlist. The Linux protected operator provides a separate full-disable action. Windows acceptance does not qualify Linux. Native macOS, startup after reboot, long-duration reliability and large-transfer/load behavior require separate evidence.
+The [Linux technical beta](docs/LINUX.md) runs a root OAuth gateway and a separate root Unix-socket executor. It requires a functioning systemd manager for command/job containment even when both long-running processes are started manually. Administrative grant removal blocks privileged Linux tools; authenticated directory listing remains confined to its configured root and does not use that allowlist. The Linux protected operator provides a separate full-disable action. Windows acceptance does not qualify Linux. Native macOS, startup after reboot, long-duration reliability and large-transfer/load behavior require separate evidence.
 
 ## Evidence
 
 The published Windows `0.1.0b1` candidate passed 83 native tests plus 7 subtests, a fresh runtime-only application installation and 26 controlled public HTTPS stages. A separate owner-supplied Claude screenshot showed successful `hostname.exe` and `whoami.exe` results on that final candidate. Its Linux-hosted regression run passed 73 tests plus 7 subtests with 10 Windows-only skips; those results do not qualify a Linux deployment. See the [Windows acceptance asset](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b1/windows-beta-0.1.0b1-acceptance.json).
 
-Linux results are recorded against their own frozen source, dependency lock, archive and reference VM in the separate acceptance asset. Read [release and acceptance status](docs/RELEASE_STATUS.md) for the evidence layers and required gates. Historical candidates' test totals are not added together.
+Linux `0.1.0b2` was qualified on 24 October 2026 for Ubuntu 24.04 LTS x86_64, distribution Python 3.12 and manual gateway/executor operation with systemd. Its exact candidate passed 107 native tests plus 7 subtests with 10 Windows-only skips, 94 portable tests plus 7 subtests with 23 skips, 10 fresh-install/recovery stages and 24 controlled public HTTPS stages. These layers overlap and are not added. The owner separately reported successful hostname, id and whoami calls from the actual Claude connection; retained server output spools and audit/job metadata corroborate those results. No raw Claude transcript, success screenshot or exact OAuth-client-to-executor-event mapping is claimed. See [release and acceptance status](docs/RELEASE_STATUS.md) and the matching release acceptance asset for identity, cleanup and evidence limits.
 
 ## Open source and voluntary support
 
