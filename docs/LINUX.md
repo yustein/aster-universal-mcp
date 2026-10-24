@@ -1,5 +1,7 @@
 # Linux technical beta: 0.1.0b2
 
+The separate [Linux `v0.1.0b2` prerelease](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2) was published on 24 October 2026. The qualified source commit is `c2ec9ce1d258d80c4922c190212ff5681f05c128`; the release acceptance asset identifies its exact archive. Publication and anonymous download/hash verification are recorded in the release body and project handoff. Later documentation updates do not replace that frozen runtime artifact.
+
 **Acceptance is artifact-specific.** This guide describes the Linux `0.1.0b2` manual deployment. These instructions and a successful package build alone do not establish release acceptance. Use the separate Linux prerelease only when its acceptance record identifies the exact archive and marks the required gates passed. [Release status](RELEASE_STATUS.md) keeps portable tests, native Linux tests, public HTTPS tests and actual Claude-account observations separate.
 
 The reference deployment target is **Ubuntu 24.04 LTS x86_64 with distribution Python 3.12 and a functioning system systemd manager**. Exact OS, kernel, Python, systemd and dependency versions belong in the final acceptance record. Other distros, architectures, Python versions, WSL/container environments and macOS are not qualified by this candidate.
@@ -31,7 +33,7 @@ This package does not install persistent gateway/executor services or advertise 
 
 ## Files and canonical layout
 
-The release artifact is `aster-universal-mcp-0.1.0b2-linux.tar.gz`, with source files at its root and Linux modes preserved. Obtain the matching `SHA256SUMS.txt`, `candidate-manifest.json`, Linux acceptance JSON, test-evidence archive and release notes from the same prerelease. Confirm the acceptance record's source/manifest/archive identity before installation.
+The release artifact is `aster-universal-mcp-0.1.0b2-linux.tar.gz`, with source files at its root and Linux modes preserved. Obtain the matching `SHA256SUMS.txt`, `candidate-manifest.json`, Linux acceptance JSON, test-evidence archive and `LINUX_RELEASE_AND_OPERATOR_GUIDE.md` from the same prerelease. Read the release notes and publication verification in the prerelease body. Confirm the acceptance record's source/manifest/archive identity before installation.
 
 | Purpose | Reference path |
 |---|---|
@@ -69,8 +71,11 @@ Use new installation paths. Do not extract a new release over an existing source
 (
 set -eu
 sudo test ! -e /opt/aster-universal-mcp/0.1.0b2-source
+sudo test ! -L /opt/aster-universal-mcp/0.1.0b2-source
 sudo test ! -e /opt/aster-universal-mcp/0.1.0b2-venv
+sudo test ! -L /opt/aster-universal-mcp/0.1.0b2-venv
 sudo test ! -e /var/lib/aster-universal-mcp
+sudo test ! -L /var/lib/aster-universal-mcp
 sudo install -d -o root -g root -m 0755 /opt/aster-universal-mcp
 sudo install -d -o root -g root -m 0755 /opt/aster-universal-mcp/0.1.0b2-source
 sudo tar --extract --gzip --preserve-permissions --no-same-owner \
@@ -79,7 +84,7 @@ sudo tar --extract --gzip --preserve-permissions --no-same-owner \
 )
 ```
 
-Stop if any absence check fails. Those paths may belong to an existing installation. Preserve and inspect them before choosing a fresh versioned source/venv and isolated state path.
+Stop if any absence or symlink check fails. `test ! -L` also rejects dangling symlinks that `test ! -e` alone would not identify. Those paths may belong to an existing installation. Preserve and inspect them before choosing a fresh versioned source/venv and isolated state path.
 
 Run setup with your actual HTTPS origin, without a trailing slash or `/mcp` path:
 
@@ -142,7 +147,7 @@ sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
 
 The code has 12 characters, displayed in groups of four, and defaults to a 900-second lifetime. `pair --ttl 300` can shorten its lifetime; the supported range is 30–900 seconds. It is printed only to the local caller, not the operator journal. Enter it only at your own Aster HTTPS origin and finish the redirect to Claude. Do not save it in public logs or issue replacements casually: issuing another code invalidates the earlier one, and owner-code lifetime is distinct from the pending browser request and nonce lifetimes.
 
-OAuth pairing does not grant privileged execution. Inspect registered clients:
+OAuth pairing does not grant privileged execution. A successful authenticated `list_directory` call is not proof of administrative approval: listing remains confined to its configured root and does not consult the administrator allowlist. Inspect registered clients:
 
 ```bash
 sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
@@ -156,7 +161,7 @@ sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
   --state /var/lib/aster-universal-mcp approve CLIENT_ID
 ```
 
-New pairing and approval require the verified candidate and both canonical running processes. Never approve an unexpected client or expose local operator actions as remote MCP tools. If pairing fails, capture the single failed transaction's sanitized metadata and diagnose it before asking for another attempt.
+Before the first privileged tool call, confirm the intended client has `admin_allowed: true` in `clients`. This grant does not widen the listing root. New pairing and approval require the verified candidate and both canonical running processes. Never approve an unexpected client or expose local operator actions as remote MCP tools. If pairing fails, capture the single failed transaction's sanitized metadata and diagnose it before asking for another attempt.
 
 ## Tools, default working directory and limits
 
@@ -241,4 +246,4 @@ Disable the application, verify both identified processes have stopped, disable 
 
 Public acceptance evidence must identify the frozen source commit/tree, manifest/archive hashes, actual environment, dependency record, harness, each test layer, real account observations and final cleanup. Keep failures and their later reconciliation. Never include live codes, tokens, cookies, token digests, credential-bearing SQLite files or recovery credentials in release assets.
 
-The software remains Apache-2.0 with voluntary donations and no required paid license or activation. Publication of this Linux candidate awaits the separate documented gates; the working Windows `v0.1.0b1` release remains unchanged.
+The software remains Apache-2.0 with voluntary donations and no required paid license or activation. The [Linux `v0.1.0b2` release](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2) has its own artifact-specific acceptance asset; publication verification is recorded in the release body and project handoff. The working Windows `v0.1.0b1` release remains unchanged.
