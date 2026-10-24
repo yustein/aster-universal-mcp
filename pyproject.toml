@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aster-universal-mcp"
-version = "0.1.0b2"
+version = "0.1.0b3"
 description = "Self-hosted authenticated MCP for Claude Free with owner-controlled privileged operations on Windows and Linux"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
@@ -19,7 +19,7 @@ py-modules = ["oauth_service", "oauth_runtime", "oauth_token_resource", "provide
   "approval_store", "approval_sessions", "client_registry", "token_store",
   "refresh_store", "oauth_codes", "sdk_auth_codes", "pairing",
   "pairing_cli", "pairing_admin", "owner_flow", "owner_approval_cli",
-  "admin_client_allowlist", "admin_client", "admin_executor_local", "admin_job_worker",
+  "admin_client_allowlist", "tool_access", "admin_client", "admin_executor_local", "admin_job_worker",
   "admin_jobs", "file_transfer", "filesystem", "proxy_security", "oauth_http_diagnostics",
   "gated_runtime", "identity", "local_token_verifier", "bearer_gate",
   "restricted_executor", "aster_mcp"]

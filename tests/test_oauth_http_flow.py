@@ -379,13 +379,12 @@ def test_new_owner_code_does_not_revive_expired_authorization(gateway):
         assert db.execute("SELECT COUNT(*) FROM access_tokens").fetchone()[0] == 0
 
 
-def test_http_authenticated_client_still_needs_operator_allowlist(gateway, caplog):
+def test_http_authenticated_client_still_needs_operator_allowlist(gateway):
     g = gateway
     flow, token = g.token()
     name = "execute_command" if os.name == "nt" else "run_command"
     marker = g.allowed / "unapproved-command-must-not-run.txt"
     assert not marker.exists()
-    caplog.set_level("ERROR")
     response = g.rpc(token, "tools/call", {"name": name, "arguments": {
         "command": [sys.executable, "-c",
                     "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('unexpected execution')",
@@ -393,9 +392,12 @@ def test_http_authenticated_client_still_needs_operator_allowlist(gateway, caplo
         "cwd": str(g.allowed)}})
     assert response.status_code == 200
     assert response.json()["result"]["isError"] is True
-    # The SDK deliberately returns a generic tool error to the client. Verify
-    # the actual denial gate in server logs, without requiring detail leakage.
-    assert "administrator client not authorized" in caplog.text
+    # An anticipated denial is an intentional MCP ToolError with safe guidance;
+    # it does not depend on a hidden server traceback to explain the next step.
+    message = " ".join(item.get("text", "") for item in response.json()["result"]["content"])
+    assert "ADMIN_APPROVAL_REQUIRED" in message
+    assert flow["client_id"] in message
+    assert "connection_status" in message
     assert not marker.exists()
     assert json.loads(g.allowlist.read_text(encoding="utf-8-sig")) == []
 
