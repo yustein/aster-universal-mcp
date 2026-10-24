@@ -6,15 +6,13 @@ import os
 import sys
 from pathlib import Path
 
-import uvicorn
-from mcp.server.transport_security import TransportSecuritySettings
-
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from oauth_runtime import build_oauth_server
-from mcp.server.auth.middleware.auth_context import get_access_token
 
 def create_app():
+    from mcp.server.transport_security import TransportSecuritySettings
+    from mcp.server.auth.middleware.auth_context import get_access_token
+    from oauth_runtime import build_oauth_server
     origin = os.environ["ASTER_WINDOWS_PUBLIC_ORIGIN"]
     os.environ["ASTER_MCP_PUBLIC_ORIGIN"] = origin
     database = Path(os.environ["ASTER_WINDOWS_OAUTH_DB"])
@@ -93,9 +91,23 @@ def create_app():
     # Match Linux: only trust a locally connected reverse proxy claiming the
     # configured HTTPS hostname. Never trust arbitrary client-supplied headers.
     from proxy_security import PublicOriginGate
-    return PublicOriginGate(app, public_origin=origin)
+    from oauth_http_diagnostics import OAuthHTTPDiagnostics
+    return OAuthHTTPDiagnostics(PublicOriginGate(app, public_origin=origin))
 
 if __name__ == "__main__":
-    uvicorn.run(create_app(), host="127.0.0.1",
-                port=int(os.environ.get("ASTER_WINDOWS_PORT", "18767")),
-                proxy_headers=False, access_log=False)
+    import json
+    from runtime_manifest import load_configuration, runtime_lease
+    config_path = os.environ.get("ASTER_WINDOWS_CONFIG")
+    if not config_path:
+        raise SystemExit("Use scripts/start-windows.ps1 with the protected Windows configuration.")
+    config = load_configuration(config_path, source_root=ROOT)
+    import logging
+    import time
+    logging.Formatter.converter = time.gmtime
+    logging.basicConfig(level=logging.INFO, datefmt="%Y-%m-%dT%H:%M:%SZ",
+                        format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    import uvicorn
+    with runtime_lease(config) as identity:
+        print("ASTER_GATEWAY_RUNTIME " + json.dumps(identity, sort_keys=True), flush=True)
+        uvicorn.run(create_app(), host="127.0.0.1", port=config["port"],
+                    proxy_headers=False, access_log=False)

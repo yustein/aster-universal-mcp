@@ -1,0 +1,318 @@
+{
+  "schema_version": 1,
+  "base_commit": "5468113f8e96f8b5a91b8ec0e4014402698f5a5d",
+  "files": [
+    {
+      "path": ".gitignore",
+      "sha256": "5c69fd9fb7d9cb1e62cf41c9c3ce9161aca98d7a6cb37b6d2527c8a93bf53d35"
+    },
+    {
+      "path": "LICENSE",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "path": "NOTICE",
+      "sha256": "dd66fccf0c85862c0cf5d6f29c01005226fdab2db509e5e5af3c58c95d670f4e"
+    },
+    {
+      "path": "README.md",
+      "sha256": "a7821058f831ffb516db1e0ab94c67a7fd6fc7eeef59b03074761b7df00e3cbb"
+    },
+    {
+      "path": "SECURITY.md",
+      "sha256": "0e9f1aeb3087549b2389592456964d35e945ce39090bb129b62e39bebb00c198"
+    },
+    {
+      "path": "admin_client.py",
+      "sha256": "854337e20cfd1d65971bde9da1571fa6ff5105f51af83bcf38d268afc6ab37be"
+    },
+    {
+      "path": "admin_client_allowlist.py",
+      "sha256": "618c8fb8d6eb56c8394ec92d89b3db63110879e737c9b93bff630182dd17d5c7"
+    },
+    {
+      "path": "admin_executor_local.py",
+      "sha256": "ff64d2f6614d0cde13e03460c35cb7a9d901e697b8672b09a854d9fe3a7819ca"
+    },
+    {
+      "path": "admin_job_worker.py",
+      "sha256": "dbe48dba651559e0ad15ba2561d40e46577cb69649205e5f04e7ce70079039be"
+    },
+    {
+      "path": "admin_jobs.py",
+      "sha256": "55e03d563e7066c78d864d47f17c0e9547d853b04412f11c5759ed3d81b2775d"
+    },
+    {
+      "path": "approval_http.py",
+      "sha256": "8b828e84309d52875d8cc61b5d16ab8b3557474dff787f0017657a2ca1eacf3b"
+    },
+    {
+      "path": "approval_sessions.py",
+      "sha256": "42ee1aebe35fcf44db6a34fae4a947ae2822f45d02abefb9a1bb384081f34804"
+    },
+    {
+      "path": "approval_store.py",
+      "sha256": "bb1cf837f314216e49f3461582df3d17159c8802eaed883e2a7a87556cac6299"
+    },
+    {
+      "path": "aster_mcp.py",
+      "sha256": "bc128ca7ccfc54515b19ed95bdf6eaf44833928ba931539341249db304dd4a46"
+    },
+    {
+      "path": "bearer_gate.py",
+      "sha256": "0ba156a76b23080051042665833ea729cd3a16b583e49e17db111cb4a3e9103e"
+    },
+    {
+      "path": "client_registry.py",
+      "sha256": "8b61825a9d950396af8fa8e396fe18e7f5eccccf397022b1450d5fb899f5b3c1"
+    },
+    {
+      "path": "docs/LINUX.md",
+      "sha256": "f3d70e7bc9fde1809e9b02f9a419daec7044e36d8072bceb0dddf5d4f2a61f3c"
+    },
+    {
+      "path": "docs/RELEASE_STATUS.md",
+      "sha256": "7b16560ca21bb249bc129744344184d09a9fe4b827bb1d6df97edd3032be35a3"
+    },
+    {
+      "path": "docs/WINDOWS.md",
+      "sha256": "97c39603a61c267451e9297fdd7005308958846e78029b0384a38cc0a82ee553"
+    },
+    {
+      "path": "file_transfer.py",
+      "sha256": "64d4ebb0017f04f287797b824112ed407a85ba23e66db525e23e7d5d90e1c238"
+    },
+    {
+      "path": "filesystem.py",
+      "sha256": "aaf0ee31e2b75c340e8cabf9d39e1bc428c26527940af416614e91732122177c"
+    },
+    {
+      "path": "gated_runtime.py",
+      "sha256": "feb44b042c62205b0966bb87aac2ea3afe0b916c37f3005d96b02096221f030d"
+    },
+    {
+      "path": "identity.py",
+      "sha256": "2035bbd60b71507c6480484a936e713dd2e90457496ed8e38d687f6d6fae4246"
+    },
+    {
+      "path": "local_token_verifier.py",
+      "sha256": "a5cc08aa9428dc4871a659353dfdd9c28eb4c0703e3fa2163aa70c11ebd99529"
+    },
+    {
+      "path": "oauth_codes.py",
+      "sha256": "d3a2c91522d58d9c82872f69ab3bd435eda6a4fdfeff974042fc02f6a6ead1b7"
+    },
+    {
+      "path": "oauth_http_diagnostics.py",
+      "sha256": "e337603b296f1c3ce3da1a842ce4d73b85bc45f2780872c944724e2cb46cfb0a"
+    },
+    {
+      "path": "oauth_runtime.py",
+      "sha256": "96bed20cd32813db5bc1a6ed66ae99ba415640abe8a90d3a645e15d3ab0ade4d"
+    },
+    {
+      "path": "oauth_service.py",
+      "sha256": "56c1ebd4917ee049ed4e4a8f7a07f0b1b4bda285e2cd2be59713053b5c844463"
+    },
+    {
+      "path": "owner_approval_cli.py",
+      "sha256": "db5a918d594c95ded63c66ccaea21d6b45257e2f5124f51b2f73b587799fa848"
+    },
+    {
+      "path": "owner_flow.py",
+      "sha256": "ea2e148a9019ef3c4b5bc29e5cb82fca64a28de905aa130f9ec97861d618a97f"
+    },
+    {
+      "path": "pairing.py",
+      "sha256": "d5a2f7a3829df1e55c385bf4b521c0565b8d5e405377b2163962cc71b5301caa"
+    },
+    {
+      "path": "pairing_admin.py",
+      "sha256": "6b1a55181b850ec9da4945b3cc7e6912f61015464d3a560498f215ca228c40df"
+    },
+    {
+      "path": "pairing_cli.py",
+      "sha256": "ca503148eb9b787e036263c3464bdbcbc15cd1792c55e6972b48167e87334b5f"
+    },
+    {
+      "path": "platforms/windows/boot_identity.py",
+      "sha256": "d644fefc964c24065a072518de5757f9f18df025c3bb8445092be73fe20b2f59"
+    },
+    {
+      "path": "platforms/windows/download.py",
+      "sha256": "e8ca095014c1c4bf5142a0f44dbed94c2a0858d15a008bab61ae338a21363571"
+    },
+    {
+      "path": "platforms/windows/executor.py",
+      "sha256": "59f4014d62e4a3647e23cac2d6d2922eb8cc610c8a94092a9778eb0712469dd0"
+    },
+    {
+      "path": "platforms/windows/job_cancel.py",
+      "sha256": "b936833249a7e276764a49be492ad2f07798557ec908b79674c374c5cb259b00"
+    },
+    {
+      "path": "platforms/windows/job_diagnostics.py",
+      "sha256": "a7ab3124c044610be7ea3cac85a5ae70ff4de985f6cc71533300df323646cb01"
+    },
+    {
+      "path": "platforms/windows/job_launcher.py",
+      "sha256": "ee0b1d39d1a11dbc6fdd8de96398ea7a6fc8d08c9a074e775ccbd222468a334d"
+    },
+    {
+      "path": "platforms/windows/job_object.py",
+      "sha256": "063cfab65f1e060c629b8aab963707fe95ef5d198428a631b607114778b67dd2"
+    },
+    {
+      "path": "platforms/windows/job_worker.py",
+      "sha256": "8d05e70632f725f46d8b503770e9591ded504f85439c0ac366384e921ffd6329"
+    },
+    {
+      "path": "platforms/windows/jobs.py",
+      "sha256": "3e5c33cf532187e6069057b39152c17a18f779c11a4fcc73a9a86acc40621396"
+    },
+    {
+      "path": "platforms/windows/oauth_gateway.py",
+      "sha256": "4bfd34edfa02ad094ebb636d04f250e05e79a25046b4ae5badea6a9df52c1dc0"
+    },
+    {
+      "path": "platforms/windows/oauth_windows_service.py",
+      "sha256": "d0f9c4be86eeed2bdff9dfa7d423a39b6cef037fed4c0998640aab3527f43947"
+    },
+    {
+      "path": "platforms/windows/process_identity.py",
+      "sha256": "a6483e588367bfd58ba63c641cfafa478f3f3940ba5e74572cffcebe7326886c"
+    },
+    {
+      "path": "platforms/windows/recovery.py",
+      "sha256": "0779961c649b6d6bccef552262205632e8c20bc4b5c0d9da8f116e69f636434f"
+    },
+    {
+      "path": "platforms/windows/runtime_manifest.py",
+      "sha256": "9f6408e3d25abfa6ab0cbe259390f34a6dbfc3010940ae54056db4fdbf505b76"
+    },
+    {
+      "path": "platforms/windows/server.py",
+      "sha256": "a5709adaffb4d81d18c8317b1a5bb14232d96428eccd4ae39ee35baa3b9bb74c"
+    },
+    {
+      "path": "platforms/windows/status_transition.py",
+      "sha256": "79816bc07656a311bba514142c063cad8b5f2584c8afaa0fca0fb702577e75b1"
+    },
+    {
+      "path": "platforms/windows/transfer.py",
+      "sha256": "ebca0bf0ff8fdf284edf6e7e9723aba85b1fbbb7b0ba86393a7f2e655263c13e"
+    },
+    {
+      "path": "platforms/windows/upload_finish.py",
+      "sha256": "5752d10cf80275fea943208d63e014e9c192c822fc31bd15e233cafc3099c7da"
+    },
+    {
+      "path": "platforms/windows/windows_service.py",
+      "sha256": "e0b93d6f23556e6ead6da838d2d5b8f894bc9ef1552812b6ba625c740e5913df"
+    },
+    {
+      "path": "provider_adapter.py",
+      "sha256": "1b00009e7d1087f7728a0f25eb1a331ed4decde8d048777c5b6978cd8917a667"
+    },
+    {
+      "path": "proxy_security.py",
+      "sha256": "ce8eef7777a2eb526740de39904b78b175ae51db6902499d6375b796586fe624"
+    },
+    {
+      "path": "pyproject.toml",
+      "sha256": "4a42cb750d812eb11eba003ea2eddf45654ddc1d5db8f6871f3036dd5cb815c0"
+    },
+    {
+      "path": "refresh_store.py",
+      "sha256": "46b7791985cd02aff9dd7100a51428b4edbba27030e61538d6fed63dfcf681dc"
+    },
+    {
+      "path": "requirements-dev.txt",
+      "sha256": "c23feb58b6f9cab899b3e457b6cad56158f5315b366cd0f7a210feef72af395b"
+    },
+    {
+      "path": "requirements-windows.txt",
+      "sha256": "2537a2f0bc4343cb079ed0a6cb674e3dbe2fd1453f99a899d504ac80cf89c508"
+    },
+    {
+      "path": "requirements.txt",
+      "sha256": "8c28cd03c83412c27ac803567c5d5fdc19c7a8611f20e1c6b1190a6af27ac293"
+    },
+    {
+      "path": "restricted_executor.py",
+      "sha256": "b095fdf4c96e6f54a842552984398182d615a1bf46edbbe8720aafbadb24ed1b"
+    },
+    {
+      "path": "scripts/create-windows-candidate.ps1",
+      "sha256": "82ec71ffe7e543eec916a73899f993017cc592598487f726d77883b3c5687a45"
+    },
+    {
+      "path": "scripts/issue-pairing-linux.sh",
+      "sha256": "1c5ab3db326f2a3a33ff9b37ab7f173926773752b54199db3c0a83c4b11e275b"
+    },
+    {
+      "path": "scripts/issue-pairing-windows.cmd",
+      "sha256": "4322f903362e895aec74412c81161e3d2e2576b061e08cea788c37693568c959"
+    },
+    {
+      "path": "scripts/issue-pairing-windows.ps1",
+      "sha256": "d6b89ce02fa1ac16f18ca8ac8bac96942675e7883dc97986c41293f44e42b0d2"
+    },
+    {
+      "path": "scripts/manage-client-windows.ps1",
+      "sha256": "44d30f3db2b81e4af6b083486afb87c2a965ec041efafb0acf3978c37ee4afa0"
+    },
+    {
+      "path": "scripts/setup-windows.ps1",
+      "sha256": "2074755a79a0e02995e6dd91892bd19011e95cb5bd0f2b25a2c65c16443e78a2"
+    },
+    {
+      "path": "scripts/start-windows.ps1",
+      "sha256": "ab3f8bbd6a3649d2eccd4f70d5ab4ba90c3635e10896e6851f44bd3634a2d87f"
+    },
+    {
+      "path": "scripts/status-windows.ps1",
+      "sha256": "f4acabec19afa3e373b2f71f723a8f320108c86e7b91a4544573fd4f42d2b2c1"
+    },
+    {
+      "path": "scripts/windows-common.ps1",
+      "sha256": "093f98dbb9c01c4edc5006de3ecf077eb6384fcec34d9aeafb8ea6812319c3da"
+    },
+    {
+      "path": "sdk_auth_codes.py",
+      "sha256": "437741bcecb0232b02979b37a7d119d0ef884d9878056ddddcb43680940c625d"
+    },
+    {
+      "path": "tests/test_full_oauth.py",
+      "sha256": "6813ad600759ce8a519c88c81d5442c5176512fd1abe6fbc11cb3ead75a1adfb"
+    },
+    {
+      "path": "tests/test_oauth_http_flow.py",
+      "sha256": "6ee81b302c3a0450f08cde69c3452e01bd0b8ebebc3a4cb24cbfed9fa77b592b"
+    },
+    {
+      "path": "tests/test_pairing_database_selection.py",
+      "sha256": "16f1aa810711c6d0167ac98b29cdd51fbec67b6f376d2d33d98b9b6325484956"
+    },
+    {
+      "path": "tests/test_short_pairing_code.py",
+      "sha256": "0f27b7ce4c1b56e5c9ed5b2ce9c59aa0cc22df76d44a969f2fcf14c754e985d3"
+    },
+    {
+      "path": "tests/test_windows_gateway.py",
+      "sha256": "058be53840cd963bb007073b49ee5d610c2ede469534c76794db094c4d851d18"
+    },
+    {
+      "path": "tests/test_windows_runtime_identity.py",
+      "sha256": "8b539ec045efce5fb6362e0625cabf9f137b2904d929156251e12d7798c028c6"
+    },
+    {
+      "path": "token_store.py",
+      "sha256": "771ac60ee7c2852b9a9057cb1e20c9f0e73bd703b63a3e1f24e3b13e33d73d32"
+    },
+    {
+      "path": "tools/windows-test-foundation.ps1",
+      "sha256": "bc3c59c9817a7e5c95e65520abb5fa0c59815dc5057fe159da34774fafe15f80"
+    }
+  ]
+}

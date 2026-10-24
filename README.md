@@ -58,6 +58,10 @@ A fresh-machine Windows source build completed 118 Windows tests and 134 core te
 Relevant official reference: [Claude custom remote MCP connectors](https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp).
 
 
-### Simplified pairing for beta testers
+### Pairing codes and authorization deadlines
 
-Pairing codes are now 12 characters (formatted `XXXX-XXXX-XXXX`) using an unambiguous 32-symbol alphabet. Use the platform-local scripts in `scripts/` to issue codes. Generating a new code invalidates the prior code.
+Pairing codes have 12 characters (formatted `XXXX-XXXX-XXXX`) using an unambiguous 32-symbol alphabet. Spaces, hyphens and lowercase are accepted. Generating a new code invalidates the prior code.
+
+On Windows, follow the [shared configuration and verified startup workflow](docs/WINDOWS.md) before running `scripts/issue-pairing-windows.ps1`. The helper checks the live gateway and its exact database before issuing a code. Keep the `.cmd` convenience wrapper in the repository's `scripts` directory.
+
+The owner code can remain valid for 15 minutes, but the current OAuth authorization request and browser session have their own five-minute lifetime. A fresh code does not extend an old request. After a failed or expired authorization, inspect the failure and begin a fresh request before retrying.

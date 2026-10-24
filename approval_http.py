@@ -1,16 +1,15 @@
-"""Read-only pending authorization page and completion redirect.
+"""Browser-bound owner pairing and one-use OAuth completion.
 
-No pairing-code submission is accepted over HTTP. The server owner must
-approve through an independently authenticated local administrative channel.
+Pairing codes are issued only through the local operator channel, then redeemed
+on the canonical HTTPS origin using a bound browser cookie and one-use form nonce.
 """
 from html import escape
 from urllib.parse import urlencode, urlsplit, urlunsplit, parse_qsl
-import secrets
+import time
 from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 from starlette.routing import Route
 from approval_store import ApprovalStore
-from sdk_auth_codes import SDKAuthorizationCodes
 from oauth_codes import AuthorizationCodeStore
 from approval_sessions import ApprovalSessions
 from pairing import PairingStore
@@ -48,6 +47,35 @@ def owner_approval_app(db_path: str):
     codes=AuthorizationCodeStore(db_path)
     sessions=ApprovalSessions(db_path)
 
+    def pairing_page(record, rid, nonce, *, new_browser=None, error=None):
+        remaining = max(0, record["expires_at"] - int(time.time()))
+        message = ("<p role='alert' data-error='invalid_or_expired_code'>"
+                   "That code was not accepted. Enter the current code generated "
+                   "on this server. You can retry using the form below.</p>") if error else ""
+        body=("<!doctype html><html><head><meta charset='utf-8'>"
+              "<title>Aster MCP pairing</title></head><body>"
+              "<h1>Connect your MCP client</h1>"
+              "<p>Client: "+escape(record["client_id"])+"</p>"
+              "<p>Permissions: "+escape(record["scope"])+"</p>"
+              +message+
+              "<p>Enter the one-time code generated locally on your server.</p>"
+              "<p>This connection request expires in "+str(remaining)+" seconds. "
+              "If it expires, restart the connection in your MCP client.</p>"
+              "<form method='post' action='/pair/redeem'>"
+              "<input type='hidden' name='request_id' value='"+escape(rid,quote=True)+"'>"
+              "<input type='hidden' name='nonce' value='"+escape(nonce,quote=True)+"'>"
+              "<label>Pairing code <input name='pairing_code' type='password' required autocomplete='off'></label>"
+              "<button type='submit'>Approve connection</button></form>"
+              "</body></html>")
+        response=HTMLResponse(body,status_code=403 if error else 200,headers={
+            "Cache-Control":"no-store",
+            "Content-Security-Policy":"default-src 'none'; form-action 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
+            "Referrer-Policy":"same-origin"})
+        if new_browser:
+            response.set_cookie("aster_pair_browser",new_browser,httponly=True,
+                                secure=True,samesite="lax",max_age=300,path="/pair")
+        return response
+
     async def status(request):
         rid=request.query_params.get("request_id","")
         record=approvals.get(rid)
@@ -64,22 +92,7 @@ def owner_approval_app(db_path: str):
                 nonce = sessions.issue_completion(rid, new_browser)
             if nonce is None:
                 return JSONResponse({"error":"browser_session_required"},status_code=403)
-            body=("<!doctype html><html><head><meta charset='utf-8'>"
-                  "<title>Aster MCP pairing</title></head><body>"
-                  "<h1>Connect your MCP client</h1>"
-                  "<p>Client: "+escape(record["client_id"])+"</p>"
-                  "<p>Permissions: "+escape(record["scope"])+"</p>"
-                  "<p>Enter the one-time code generated locally on your server.</p>"
-                  "<form method='post' action='/pair/redeem'>"
-                  "<input type='hidden' name='request_id' value='"+escape(rid,quote=True)+"'>"
-                  "<input type='hidden' name='nonce' value='"+escape(nonce,quote=True)+"'>"
-                  "<label>Pairing code <input name='pairing_code' type='password' required autocomplete='off'></label>"
-                  "<button type='submit'>Approve connection</button></form>"
-                  "</body></html>")
-            response=HTMLResponse(body,headers={"Cache-Control":"no-store","Content-Security-Policy":"default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'","Referrer-Policy":"same-origin"})
-            if new_browser:
-                response.set_cookie("aster_pair_browser",new_browser,httponly=True,secure=True,samesite="lax",max_age=300,path="/pair")
-            return response
+            return pairing_page(record,rid,nonce,new_browser=new_browser)
         nonce = sessions.issue_completion(rid,browser) if browser else None
         if nonce is None:
             return JSONResponse({"error":"browser_session_required"},status_code=403)
@@ -96,7 +109,6 @@ def owner_approval_app(db_path: str):
     async def redeem(request):
         if not _valid_browser_origin(request):
             return JSONResponse({"error":"invalid_origin"},status_code=403)
-        import os
         if request.headers.get("content-type","").split(";")[0].strip().lower() != "application/x-www-form-urlencoded":
             return JSONResponse({"error":"invalid_content_type"},status_code=415)
         form=await request.form()
@@ -110,8 +122,13 @@ def owner_approval_app(db_path: str):
         if not browser or not sessions.consume_nonce(rid,browser,nonce):
             return JSONResponse({"error":"invalid_session"},status_code=403)
         if not PairingStore(db_path).consume(code):
-            return JSONResponse({"error":"invalid_or_expired_code"},status_code=403,
-                                headers={"Cache-Control":"no-store"})
+            record=approvals.get(rid)
+            retry_nonce=sessions.issue_completion(rid,browser) if record else None
+            if retry_nonce is None:
+                return JSONResponse({"error":"authorization_expired",
+                                     "message":"Restart the connection in your MCP client."},
+                                    status_code=403,headers={"Cache-Control":"no-store"})
+            return pairing_page(record,rid,retry_nonce,error=True)
         if not approvals.approve(rid):
             return JSONResponse({"error":"approval_failed"},status_code=409)
         return RedirectResponse("/pair/authorize?"+urlencode({"request_id":rid}),
@@ -122,9 +139,6 @@ def owner_approval_app(db_path: str):
             return JSONResponse({"error":"invalid_origin"},status_code=403)
         # TLS is terminated by Caddy; the internal ASGI URL is HTTP.
         # Compare against the configured canonical HTTPS origin instead.
-        import os
-        expected_origin = os.environ.get("ASTER_MCP_PUBLIC_ORIGIN")
-        supplied_origin = request.headers.get("origin")
         content_type = request.headers.get("content-type","").split(";")[0].strip().lower()
         if content_type != "application/x-www-form-urlencoded":
             return JSONResponse({"error":"invalid_content_type"},status_code=415)
