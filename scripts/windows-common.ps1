@@ -118,6 +118,37 @@ function Protect-AsterState([string]$Directory) {
     }
 }
 
+function Protect-AsterControlFileOwner([string]$Path) {
+    Assert-AsterAdministrator
+    $name = [IO.Path]::GetFileName($Path)
+    if ($name -notin @('gateway-config.json', 'candidate-manifest.json', 'operator-windows.ps1', 'admin-clients.json')) {
+        throw 'Owner normalization is restricted to protected control files.'
+    }
+    Assert-AsterPathEqual $Path (Join-Path (Get-AsterStateDirectory) $name) 'Protected control file'
+    $item = Get-Item -LiteralPath $Path
+    if ($item.PSIsContainer -or ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Protected control item must be a regular file.'
+    }
+    $acl = Get-Acl -LiteralPath $Path
+    foreach ($rule in $acl.Access) {
+        $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+        if ($rule.AccessControlType -eq 'Allow' -and $sid -notin @('S-1-5-18', 'S-1-5-32-544')) {
+            throw 'Protected control file has an unexpected access grant.'
+        }
+    }
+    # Setup copies/writes control files and Python replaces the allowlist.
+    # Normalize these exact files without changing workspace user-file owners.
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier('S-1-5-32-544')))
+    Set-Acl -LiteralPath $Path -AclObject $acl
+    if ((Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value -ne 'S-1-5-32-544') {
+        throw 'Protected control file owner normalization could not be verified.'
+    }
+}
+
+function Protect-AsterAllowlistOwner {
+    Protect-AsterControlFileOwner (Join-Path (Get-AsterStateDirectory) 'admin-clients.json')
+}
+
 function Get-AsterWindowsContext {
     $state = Get-AsterStateDirectory
     $path = Join-Path $state 'gateway-config.json'
@@ -130,6 +161,20 @@ function Get-AsterWindowsContext {
     Assert-AsterPathEqual $config.admin_clients (Join-Path $state 'admin-clients.json') 'Client allowlist'
     Assert-AsterPathEqual $config.source_manifest (Join-Path $state 'candidate-manifest.json') 'Source manifest'
     Assert-AsterPathEqual $config.runtime_manifest (Join-Path $state 'gateway-runtime.json') 'Runtime manifest'
+    if ($config.PSObject.Properties.Name -notcontains 'workspace_root' -or
+        $config.PSObject.Properties.Name -notcontains 'operator_script' -or
+        $config.PSObject.Properties.Name -notcontains 'operator_sha256') {
+        throw 'Run verified setup again to install the default workspace and protected emergency operator.'
+    }
+    Assert-AsterPathEqual $config.workspace_root (Join-Path $state 'workspace') 'Default workspace'
+    $workspaceItem = Get-Item -LiteralPath $config.workspace_root
+    if (-not $workspaceItem.PSIsContainer -or ($workspaceItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'Default workspace must be a real directory, not a reparse point.'
+    }
+    Assert-AsterPathEqual $config.operator_script (Join-Path $state 'operator-windows.ps1') 'Emergency operator'
+    if ((Get-FileHash -LiteralPath $config.operator_script -Algorithm SHA256).Hash.ToLowerInvariant() -cne $config.operator_sha256) {
+        throw 'Protected emergency operator identity changed. Restore it through verified setup.'
+    }
     if (-not (Test-Path -LiteralPath $config.python_executable -PathType Leaf)) { throw 'Repository Python environment is missing.' }
     $null = Assert-AsterCandidate $config.source_manifest $config.candidate_id
     return [pscustomobject]@{ State = $state; ConfigPath = $path; Config = $config; Python = $config.python_executable; Root = $script:AsterSourceRoot }
@@ -143,6 +188,7 @@ function Set-AsterWindowsEnvironment($Context) {
     $env:ASTER_WINDOWS_ADMIN_CLIENTS = $c.admin_clients
     $env:ASTER_WINDOWS_PORT = [string]$c.port
     $env:ASTER_WINDOWS_RUNTIME_MANIFEST = $c.runtime_manifest
+    $env:ASTER_WINDOWS_WORKSPACE = $c.workspace_root
     $env:PYTHONPATH = $Context.Root + ';' + (Join-Path $Context.Root 'platforms\windows')
     $env:PYTHONNOUSERSITE = '1'
 }
@@ -152,7 +198,7 @@ function Get-AsterVerifiedRuntime($Context) {
     if (-not (Test-Path -LiteralPath $c.runtime_manifest -PathType Leaf)) { throw 'Gateway runtime manifest is missing; pairing is blocked.' }
     $runtime = Get-Content -LiteralPath $c.runtime_manifest -Encoding UTF8 -Raw | ConvertFrom-Json
     if ($runtime.schema_version -ne 1 -or [int]$runtime.pid -le 0) { throw 'Invalid gateway runtime manifest.' }
-    foreach ($field in @('source_root', 'python_executable', 'oauth_db', 'admin_clients')) {
+    foreach ($field in @('source_root', 'python_executable', 'oauth_db', 'admin_clients', 'workspace_root')) {
         Assert-AsterPathEqual ([string]$runtime.$field) ([string]$c.$field) "Runtime $field"
     }
     if ($runtime.public_origin -cne $c.public_origin -or [int]$runtime.port -ne [int]$c.port -or
@@ -169,7 +215,7 @@ function Get-AsterVerifiedRuntime($Context) {
     if ($process.StartTime.ToUniversalTime() -gt $manifestStarted.AddSeconds(2)) { throw 'Runtime PID has been reused by a newer process.' }
     if ($runtime.PSObject.Properties.Name -notcontains 'process_started_at') { throw 'The runtime record lacks the Windows process creation time.' }
     $recordedCreation = [DateTimeOffset]::Parse([string]$runtime.process_started_at).UtcDateTime
-    if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $recordedCreation).TotalSeconds) -gt 1) {
+    if ([Math]::Abs(($process.StartTime.ToUniversalTime() - $recordedCreation).TotalMilliseconds) -gt 1) {
         throw 'The live process creation time does not match the runtime record.'
     }
     if (-not $runtime.elevated) { throw 'This privileged beta deployment requires an elevated gateway.' }

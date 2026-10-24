@@ -1,7 +1,11 @@
 {
   "schema_version": 1,
-  "base_commit": "5468113f8e96f8b5a91b8ec0e4014402698f5a5d",
+  "base_commit": "3481f6623488c413d0caed05f787f52153691005",
   "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "64e302428a7dbbd048d87952d9729c588ed8a1d3d6c0f05a60781e4d1967d3c0"
+    },
     {
       "path": ".gitignore",
       "sha256": "5c69fd9fb7d9cb1e62cf41c9c3ce9161aca98d7a6cb37b6d2527c8a93bf53d35"
@@ -16,11 +20,11 @@
     },
     {
       "path": "README.md",
-      "sha256": "a7821058f831ffb516db1e0ab94c67a7fd6fc7eeef59b03074761b7df00e3cbb"
+      "sha256": "c01f6cc946ea1908a31403fc247c27e908b68d02fdc3259fa6f0f32159895c9a"
     },
     {
       "path": "SECURITY.md",
-      "sha256": "0e9f1aeb3087549b2389592456964d35e945ce39090bb129b62e39bebb00c198"
+      "sha256": "48b311f65482d93122d798b8647fd4503079f0865c1751e5318f3e446875ea11"
     },
     {
       "path": "admin_client.py",
@@ -68,15 +72,15 @@
     },
     {
       "path": "docs/LINUX.md",
-      "sha256": "f3d70e7bc9fde1809e9b02f9a419daec7044e36d8072bceb0dddf5d4f2a61f3c"
+      "sha256": "50e517d5b165f8784039e02caf86ccd7dc04a3e7b4a5502270f818f0d6e255ba"
     },
     {
       "path": "docs/RELEASE_STATUS.md",
-      "sha256": "7b16560ca21bb249bc129744344184d09a9fe4b827bb1d6df97edd3032be35a3"
+      "sha256": "d8c82e1ea4f6317dcedb50a78a81f0be5f5d9e6fddaa1d6cf06da8a6d57a2dd3"
     },
     {
       "path": "docs/WINDOWS.md",
-      "sha256": "97c39603a61c267451e9297fdd7005308958846e78029b0384a38cc0a82ee553"
+      "sha256": "d13c0fdec7adf05ed3e987ffab07f75af6ef923feeec6081ec8460d43d83619e"
     },
     {
       "path": "file_transfer.py",
@@ -108,11 +112,15 @@
     },
     {
       "path": "oauth_runtime.py",
-      "sha256": "96bed20cd32813db5bc1a6ed66ae99ba415640abe8a90d3a645e15d3ab0ade4d"
+      "sha256": "6ec90a0bfddde01d6a92866126ba3e65bcf9a039edb9735b6e5ec24f01f2315c"
     },
     {
       "path": "oauth_service.py",
       "sha256": "56c1ebd4917ee049ed4e4a8f7a07f0b1b4bda285e2cd2be59713053b5c844463"
+    },
+    {
+      "path": "oauth_token_resource.py",
+      "sha256": "a79905b1cb2612913b2a0b9a9ca143b9dad156815e0a361611a287b0d7ce11a6"
     },
     {
       "path": "owner_approval_cli.py",
@@ -172,7 +180,7 @@
     },
     {
       "path": "platforms/windows/oauth_gateway.py",
-      "sha256": "4bfd34edfa02ad094ebb636d04f250e05e79a25046b4ae5badea6a9df52c1dc0"
+      "sha256": "e3802b7f64a5dfcbe309449f7c0d2f6d4ea5c0f22f24e6b622b059dc48daedb4"
     },
     {
       "path": "platforms/windows/oauth_windows_service.py",
@@ -188,7 +196,7 @@
     },
     {
       "path": "platforms/windows/runtime_manifest.py",
-      "sha256": "9f6408e3d25abfa6ab0cbe259390f34a6dbfc3010940ae54056db4fdbf505b76"
+      "sha256": "c74b4f7874471f86717a1b7ed76501f0ae9fc2420f827673cb1efebc06f1ce9d"
     },
     {
       "path": "platforms/windows/server.py",
@@ -212,7 +220,7 @@
     },
     {
       "path": "provider_adapter.py",
-      "sha256": "1b00009e7d1087f7728a0f25eb1a331ed4decde8d048777c5b6978cd8917a667"
+      "sha256": "26e02fae9c4cc0da049851ba3fff7ef3660bff79132e98d13f03724dccbccc36"
     },
     {
       "path": "proxy_security.py",
@@ -220,15 +228,23 @@
     },
     {
       "path": "pyproject.toml",
-      "sha256": "4a42cb750d812eb11eba003ea2eddf45654ddc1d5db8f6871f3036dd5cb815c0"
+      "sha256": "c2d9147963143a33474a5c43878742aed651cfcc688494caa78480f9a4fc760a"
     },
     {
       "path": "refresh_store.py",
-      "sha256": "46b7791985cd02aff9dd7100a51428b4edbba27030e61538d6fed63dfcf681dc"
+      "sha256": "8d549d0931e97afb7e2499c6aee8405d44f4bf6498296e99923c907274e084b1"
     },
     {
       "path": "requirements-dev.txt",
       "sha256": "c23feb58b6f9cab899b3e457b6cad56158f5315b366cd0f7a210feef72af395b"
+    },
+    {
+      "path": "requirements-windows-lock.txt",
+      "sha256": "2f38558ab46e4b3e4104f3b309dd3faee09739a6967d2a4a6d1916e1074daa5f"
+    },
+    {
+      "path": "requirements-windows-test-lock.txt",
+      "sha256": "fb27c66c57bf3424d1b1ebd41f5a6f1579d1f2eca2c3bf0750973fab46d12800"
     },
     {
       "path": "requirements-windows.txt",
@@ -247,6 +263,10 @@
       "sha256": "82ec71ffe7e543eec916a73899f993017cc592598487f726d77883b3c5687a45"
     },
     {
+      "path": "scripts/disable-windows.ps1",
+      "sha256": "042dc39983622664f0a6d21661ecb875f953ba3f986ccf2f5c0e91e61991f7c7"
+    },
+    {
       "path": "scripts/issue-pairing-linux.sh",
       "sha256": "1c5ab3db326f2a3a33ff9b37ab7f173926773752b54199db3c0a83c4b11e275b"
     },
@@ -260,23 +280,31 @@
     },
     {
       "path": "scripts/manage-client-windows.ps1",
-      "sha256": "44d30f3db2b81e4af6b083486afb87c2a965ec041efafb0acf3978c37ee4afa0"
+      "sha256": "a9242e67fe2b2e1550c98a0265b7ff854fc903e671870e7ce8756bc4da49a300"
+    },
+    {
+      "path": "scripts/operator-windows.ps1",
+      "sha256": "6ea28bc11fec8a305d533cd1196fde93b09c7897e1295133f229ec9f21c3f427"
     },
     {
       "path": "scripts/setup-windows.ps1",
-      "sha256": "2074755a79a0e02995e6dd91892bd19011e95cb5bd0f2b25a2c65c16443e78a2"
+      "sha256": "ff3ab4ec15460fcab35431aa1e0b1f73d5a4a9c88b05a5894d36fb03963643ae"
     },
     {
       "path": "scripts/start-windows.ps1",
-      "sha256": "ab3f8bbd6a3649d2eccd4f70d5ab4ba90c3635e10896e6851f44bd3634a2d87f"
+      "sha256": "63a45b0d77970f050fb37208ccfa24a24104ec233f304a715913969af52d4a38"
     },
     {
       "path": "scripts/status-windows.ps1",
       "sha256": "f4acabec19afa3e373b2f71f723a8f320108c86e7b91a4544573fd4f42d2b2c1"
     },
     {
+      "path": "scripts/stop-windows.ps1",
+      "sha256": "f9d36f68e1687692f3037099cb09a32d04334d858348613a7c9c1b70ddc4ab99"
+    },
+    {
       "path": "scripts/windows-common.ps1",
-      "sha256": "093f98dbb9c01c4edc5006de3ecf077eb6384fcec34d9aeafb8ea6812319c3da"
+      "sha256": "a05469199f8b43fd4df775d908ef3d11caf94be0c02df572d1855933ce9ba666"
     },
     {
       "path": "sdk_auth_codes.py",
@@ -288,27 +316,43 @@
     },
     {
       "path": "tests/test_oauth_http_flow.py",
-      "sha256": "6ee81b302c3a0450f08cde69c3452e01bd0b8ebebc3a4cb24cbfed9fa77b592b"
+      "sha256": "ba2234a2d5e35568ea6a5185494189c1c1a7d3f18a45fe3385279c20512b2aba"
     },
     {
       "path": "tests/test_pairing_database_selection.py",
       "sha256": "16f1aa810711c6d0167ac98b29cdd51fbec67b6f376d2d33d98b9b6325484956"
     },
     {
+      "path": "tests/test_refresh_revocation.py",
+      "sha256": "9b82177783c150303c54439ec28622e959355e6c7fce504d0d2f7e621913e3a8"
+    },
+    {
       "path": "tests/test_short_pairing_code.py",
       "sha256": "0f27b7ce4c1b56e5c9ed5b2ce9c59aa0cc22df76d44a969f2fcf14c754e985d3"
+    },
+    {
+      "path": "tests/test_token_resource_binding.py",
+      "sha256": "324fe09b90582f178439365cadea9269ab47d1edc589c9d0c4b6c4b66a7db654"
     },
     {
       "path": "tests/test_windows_gateway.py",
       "sha256": "70219bde97241db1196f2188a01ab600722429b6dfe96ca95faca4c439ba4575"
     },
     {
+      "path": "tests/test_windows_operator_lifecycle.py",
+      "sha256": "94d10c2722ab0a47023aa751ef68eefd38b6ab6a3762e5d70b94001dfa76e4a5"
+    },
+    {
       "path": "tests/test_windows_runtime_identity.py",
-      "sha256": "8b539ec045efce5fb6362e0625cabf9f137b2904d929156251e12d7798c028c6"
+      "sha256": "c77996072eaae1d5be4c5f88b45e64e63ef84f79eb9c80703813dbfa0b308cbe"
     },
     {
       "path": "token_store.py",
       "sha256": "771ac60ee7c2852b9a9057cb1e20c9f0e73bd703b63a3e1f24e3b13e33d73d32"
+    },
+    {
+      "path": "tools/build-windows-release.py",
+      "sha256": "c9cb4bd4cfa5db6ac60bda51fd25b2b239d24d71673400f5da2ccf094aa2eace"
     },
     {
       "path": "tools/windows-test-foundation.ps1",

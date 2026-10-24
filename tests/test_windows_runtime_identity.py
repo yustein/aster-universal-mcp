@@ -42,6 +42,8 @@ def deployment(tmp_path):
     pairing.write_text("# Frozen pairing fixture\n", encoding="utf-8")
     state = tmp_path / "protected-state"
     state.mkdir()
+    workspace = state / "workspace"
+    workspace.mkdir()
     manifest = state / "candidate-manifest.json"
     manifest.write_text(json.dumps({
         "schema_version": 1,
@@ -57,6 +59,7 @@ def deployment(tmp_path):
         "schema_version": 1,
         "source_root": str(root),
         "python_executable": str(Path(sys.executable).resolve()),
+        "workspace_root": str(workspace),
         "oauth_db": str(state / "windows-oauth.sqlite"),
         "admin_clients": str(allowlist),
         "source_manifest": str(manifest),
@@ -74,7 +77,7 @@ def deployment(tmp_path):
         return runtime.load_configuration(path, source_root=root)
 
     write_config()
-    return SimpleNamespace(root=root, state=state, path=path, config=config,
+    return SimpleNamespace(root=root, state=state, workspace=workspace, path=path, config=config,
                            manifest=manifest, gateway=gateway, pairing=pairing,
                            write_config=write_config, load=load)
 
@@ -88,6 +91,44 @@ def test_valid_bom_configuration_exports_the_verified_identity(deployment):
         assert os.environ[name] == str(loaded[key])
     assert not Path(loaded["runtime_manifest"]).exists()
     assert not Path(loaded["oauth_db"]).exists()
+
+
+def test_default_workspace_output_preserves_frozen_source(deployment, monkeypatch):
+    loaded = deployment.load()
+    spec = importlib.util.spec_from_file_location(
+        "workspace_executor", MODULE_PATH.with_name("executor.py"))
+    executor = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(executor)
+    # The startup entrypoint changes into this validated directory before
+    # accepting tools; the public command keeps its existing cwd='.' default.
+    monkeypatch.chdir(loaded["workspace_root"])
+    result = executor.run_command([
+        sys.executable, "-c",
+        "from pathlib import Path; Path('claude_test.txt').write_text('workspace proof', encoding='utf-8')",
+    ], timeout=10)
+    assert result["status"] == "completed" and result["exit_code"] == 0
+    assert (deployment.workspace / "claude_test.txt").read_text() == "workspace proof"
+    assert not (deployment.root / "claude_test.txt").exists()
+    assert deployment.load()["candidate_id"] == loaded["candidate_id"]
+
+
+@pytest.mark.parametrize("location", ["source", "outside", "missing"])
+def test_workspace_must_be_the_real_external_state_workspace(deployment, location):
+    destination = {
+        "source": deployment.root,
+        "outside": deployment.state.parent,
+        "missing": deployment.state / "missing",
+    }[location]
+    deployment.config["workspace_root"] = str(destination)
+    deployment.write_config()
+    with pytest.raises(ValueError, match="workspace_root"):
+        deployment.load()
+
+
+def test_unexpected_source_output_is_still_rejected(deployment):
+    (deployment.root / "unexpected.txt").write_text("outside the workspace", encoding="utf-8")
+    with pytest.raises(ValueError, match="source file inventory"):
+        deployment.load()
 
 
 @pytest.mark.parametrize("filename", ["gateway", "pairing"])
@@ -147,11 +188,12 @@ def test_runtime_identity_cannot_overwrite_other_protected_state(deployment, ali
     ("oauth_db", "other-oauth.sqlite"),
     ("admin_clients", "other-clients.json"),
     ("runtime_manifest", "other-runtime.json"),
+    ("workspace_root", "other-workspace"),
     ("port", "18768"),
 ])
 def test_conflicting_environment_is_rejected_without_partial_export(
         deployment, monkeypatch, key, bad_value):
-    if key in ("oauth_db", "admin_clients", "runtime_manifest"):
+    if key in ("oauth_db", "admin_clients", "runtime_manifest", "workspace_root"):
         bad_value = str(deployment.state / bad_value)
     name = runtime.ENV_KEYS[key]
     monkeypatch.setenv(name, bad_value)
@@ -178,6 +220,7 @@ def test_lease_cleans_identity_and_releases_lock_after_exit(deployment, failure)
         with runtime.runtime_lease(config) as identity:
             assert identity["pid"] == os.getpid()
             assert identity["candidate_id"] == config["candidate_id"]
+            assert identity["workspace_root"] == config["workspace_root"]
             assert json.loads(path.read_text(encoding="utf-8")) == identity
             assert datetime.fromisoformat(identity["started_at"].replace("Z", "+00:00")).tzinfo
             if failure is not None:

@@ -1,0 +1,8 @@
+# Frozen source manifests hash bytes. Keep source line endings stable on Windows.
+* text=auto eol=lf
+*.zip -text
+*.whl -text
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.ico -text

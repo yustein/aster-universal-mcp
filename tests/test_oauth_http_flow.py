@@ -1,9 +1,10 @@
 """Exercise the deployed gateway protocol over real loopback HTTPS.
 
-Only owner actions (issuing a code and approving a client) touch local stores.
-Registration, authorization, browser forms, PKCE exchange and MCP requests use
-the actual gateway routes. This remains an integration test, not a real Claude
-account acceptance test or proof of the external tunnel configuration.
+Owner actions use local stores; negative cases explicitly expire or revoke
+isolated test records. Registration, authorization, browser forms, PKCE and
+refresh exchanges, and MCP requests use the actual gateway routes. This remains
+an integration test, not a real Claude account acceptance test or proof of the
+external tunnel configuration.
 """
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -156,14 +157,25 @@ class Gateway:
             **changes,
         })
 
-    def token(self):
+    def grant(self):
         flow = self.begin()
         form = self.open_pairing(flow)
         code = PairingStore(str(self.database)).issue(ttl_seconds=900)
         self.finish(flow, form, code)
         result = self.exchange(flow)
         assert result.status_code == 200, result.text
-        return flow, result.json()["access_token"]
+        return flow, result.json()
+
+    def token(self):
+        flow, grant = self.grant()
+        return flow, grant["access_token"]
+
+    def refresh(self, flow, token, **changes):
+        return self.http.post(flow["token_endpoint"], data={
+            "grant_type": "refresh_token", "client_id": flow["client_id"],
+            "refresh_token": token, "resource": self.origin + "/mcp",
+            **changes,
+        })
 
     def rpc(self, token, method, params, *, request_id=1):
         return self.http.post("/mcp", json={
@@ -402,6 +414,147 @@ def test_windows_http_token_executes_only_after_operator_approval(gateway):
     denied = g.rpc(token, "tools/call", {"name": "execute_command", "arguments": {
         "command": [sys.executable, "-c", "print('must-not-execute')"], "cwd": str(g.allowed)}})
     assert denied.status_code == 200 and denied.json()["result"]["isError"] is True
+
+
+def test_http_refresh_rotates_after_access_expiry_and_rejects_replay(gateway):
+    g = gateway
+    flow, grant = g.grant()
+    update_allowlist(g.allowlist, flow["client_id"], approve=True, db=g.database)
+    # Expire only the access token in the disposable test database instead of
+    # making the suite sleep for the real 15-minute lifetime.
+    with sqlite3.connect(g.database) as db:
+        db.execute("UPDATE access_tokens SET expires_at=0 WHERE digest=?",
+                   (hashlib.sha256(grant["access_token"].encode()).hexdigest(),))
+    expired = g.rpc(grant["access_token"], "tools/list", {})
+    assert expired.status_code == 401
+
+    response = g.refresh(flow, grant["refresh_token"])
+    assert response.status_code == 200, response.text
+    renewed = response.json()
+    assert renewed["token_type"].lower() == "bearer"
+    assert renewed["expires_in"] == 900 and renewed["scope"] == "system:admin"
+    assert renewed["access_token"] != grant["access_token"]
+    assert renewed["refresh_token"] != grant["refresh_token"]
+    directory = _tool_result(g.rpc(renewed["access_token"], "tools/call", {
+        "name": "list_directory", "arguments": {"path": str(g.allowed)}}))
+    assert any(item == "http-acceptance-marker.txt" or
+               isinstance(item, dict) and item.get("name") == "http-acceptance-marker.txt"
+               for item in directory["entries"])
+
+    replay = g.refresh(flow, grant["refresh_token"])
+    assert replay.status_code == 400 and replay.json()["error"] == "invalid_grant"
+    # Rejecting the consumed credential must not accidentally consume its
+    # separately issued replacement.
+    second = g.refresh(flow, renewed["refresh_token"])
+    assert second.status_code == 200, second.text
+    assert second.json()["refresh_token"] != renewed["refresh_token"]
+
+
+def test_http_refresh_without_repeated_resource_uses_the_existing_bound_grant(gateway):
+    g = gateway
+    flow, grant = g.grant()
+    response = g.http.post(flow["token_endpoint"], data={
+        "grant_type": "refresh_token", "client_id": flow["client_id"],
+        "refresh_token": grant["refresh_token"],
+    })
+    assert response.status_code == 200, response.text
+    renewed = response.json()
+    assert renewed["scope"] == "system:admin"
+    assert g.rpc(renewed["access_token"], "tools/list", {}).status_code == 200
+
+
+def test_http_token_exchange_rejects_wrong_resource_without_consuming_code(gateway):
+    g = gateway
+    flow = g.begin()
+    form = g.open_pairing(flow)
+    code = PairingStore(str(g.database)).issue(ttl_seconds=900)
+    g.finish(flow, form, code)
+    rejected = g.exchange(flow, resource="https://different-resource.invalid/mcp")
+    assert rejected.status_code == 400
+    assert rejected.json()["error"] == "invalid_target"
+    accepted = g.exchange(flow)
+    assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.parametrize("invalid_request", [
+    "unknown_client", "different_registered_client", "scope_escalation", "wrong_resource",
+])
+def test_http_refresh_rejects_invalid_request_without_consuming_grant(gateway, invalid_request):
+    g = gateway
+    flow, grant = g.grant()
+    if invalid_request == "unknown_client":
+        changes = {"client_id": "unregistered-client"}
+    elif invalid_request == "different_registered_client":
+        other = g.begin()
+        changes = {"client_id": other["client_id"]}
+    elif invalid_request == "scope_escalation":
+        changes = {"scope": "system:admin ungranted-scope"}
+    else:
+        changes = {"resource": "https://different-resource.invalid/mcp"}
+    rejected = g.refresh(flow, grant["refresh_token"], **changes)
+    assert rejected.status_code in (400, 401), f"Unexpected refresh HTTP status {rejected.status_code}"
+    assert rejected.json()["error"] in {
+        "invalid_client", "invalid_grant", "invalid_scope", "invalid_target", "invalid_request",
+    }
+    with sqlite3.connect(g.database) as db:
+        assert db.execute("SELECT COUNT(*) FROM access_tokens").fetchone()[0] == 1
+        row = db.execute("SELECT used FROM refresh_tokens WHERE digest=?",
+                         (hashlib.sha256(grant["refresh_token"].encode()).hexdigest(),)).fetchone()
+        assert row == (0,)
+    accepted = g.refresh(flow, grant["refresh_token"])
+    assert accepted.status_code == 200, accepted.text
+
+
+@pytest.mark.parametrize("invalid_grant", ["expired_refresh", "revoked_client"])
+def test_http_refresh_rejects_expired_grant_or_revoked_client(gateway, invalid_grant):
+    g = gateway
+    flow, grant = g.grant()
+    with sqlite3.connect(g.database) as db:
+        if invalid_grant == "expired_refresh":
+            db.execute("UPDATE refresh_tokens SET expires_at=0 WHERE digest=?",
+                       (hashlib.sha256(grant["refresh_token"].encode()).hexdigest(),))
+        else:
+            db.execute("UPDATE oauth_clients SET revoked=1 WHERE client_id=?", (flow["client_id"],))
+    response = g.refresh(flow, grant["refresh_token"])
+    assert response.status_code in (400, 401), f"Unexpected refresh HTTP status {response.status_code}"
+    assert response.json()["error"] in {"invalid_grant", "invalid_client"}
+    with sqlite3.connect(g.database) as db:
+        assert db.execute("SELECT COUNT(*) FROM access_tokens").fetchone()[0] == 1
+    if invalid_grant == "revoked_client":
+        assert g.rpc(grant["access_token"], "tools/list", {}).status_code == 401
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Real Windows executor after OAuth refresh")
+def test_windows_http_refreshed_token_executes_and_respects_operator_revocation(gateway):
+    g = gateway
+    flow, grant = g.grant()
+    update_allowlist(g.allowlist, flow["client_id"], approve=True, db=g.database)
+    refreshed = g.refresh(flow, grant["refresh_token"])
+    assert refreshed.status_code == 200, refreshed.text
+    renewed = refreshed.json()
+    result = _tool_result(g.rpc(renewed["access_token"], "tools/call", {
+        "name": "execute_command", "arguments": {
+            "command": [sys.executable, "-c", "print('HTTP-WINDOWS-REFRESH-PASS')"],
+            "cwd": str(g.allowed), "timeout": 10}}))
+    assert result["status"] == "completed" and result["exit_code"] == 0
+    assert result["stdout"].strip() == "HTTP-WINDOWS-REFRESH-PASS"
+
+    update_allowlist(g.allowlist, flow["client_id"], approve=False, db=g.database)
+    marker = g.allowed / "revoked-refresh-must-not-execute.txt"
+    command = {"name": "execute_command", "arguments": {
+        "command": [sys.executable, "-c",
+                    "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('unexpected execution')",
+                    str(marker)], "cwd": str(g.allowed), "timeout": 10}}
+    denied = g.rpc(renewed["access_token"], "tools/call", command)
+    assert denied.status_code == 200 and denied.json()["result"]["isError"] is True
+    assert not marker.exists()
+    # OAuth renewal cannot restore a permission removed by the local owner.
+    again = g.refresh(flow, renewed["refresh_token"])
+    assert again.status_code == 200, again.text
+    denied = g.rpc(again.json()["access_token"], "tools/call", command)
+    assert denied.status_code == 200 and denied.json()["result"]["isError"] is True
+    assert not marker.exists()
+    assert json.loads(g.allowlist.read_text(encoding="utf-8-sig")) == []
 
 
 @pytest.mark.parametrize("legacy_nonce_present", [True, False])

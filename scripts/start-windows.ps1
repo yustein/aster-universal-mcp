@@ -15,7 +15,7 @@ $gateway = Join-Path $context.Root 'platforms\windows\oauth_gateway.py'
 if ($Background) {
     $stdout = Join-Path $context.State 'gateway-stdout.log'
     $stderr = Join-Path $context.State 'gateway-stderr.log'
-    $process = Start-Process -FilePath $context.Python -ArgumentList ('"' + $gateway + '"') -WorkingDirectory $context.Root -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+    $process = Start-Process -FilePath $context.Python -ArgumentList ('"' + $gateway + '"') -WorkingDirectory $context.Config.workspace_root -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
     $deadline = [DateTime]::UtcNow.AddSeconds(20)
     $lastReason = 'Gateway did not become ready.'
     try {
@@ -34,6 +34,6 @@ if ($Background) {
         throw
     }
 } else {
-    Push-Location $context.Root
+    Push-Location $context.Config.workspace_root
     try { Invoke-AsterPython $context.Python @($gateway) } finally { Pop-Location }
 }

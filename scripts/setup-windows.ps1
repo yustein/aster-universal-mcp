@@ -32,6 +32,13 @@ if (Test-Path -LiteralPath $runtimePath) {
 }
 $null = New-Item -ItemType Directory -Path $state -Force
 Protect-AsterState $state
+$workspace = Join-Path $state 'workspace'
+if (Test-Path -LiteralPath $workspace) {
+    $workspaceItem = Get-Item -LiteralPath $workspace
+    if (-not $workspaceItem.PSIsContainer -or ($workspaceItem.Attributes -band [IO.FileAttributes]::ReparsePoint)) {
+        throw 'The default workspace must be a real directory inside the protected state directory.'
+    }
+} else { $null = New-Item -ItemType Directory -Path $workspace }
 $prefix = @()
 if (-not $PythonExecutable) {
     $launcher = Get-Command py.exe -ErrorAction SilentlyContinue
@@ -51,8 +58,11 @@ if ($Wheelhouse) {
     $Wheelhouse = (Resolve-Path -LiteralPath $Wheelhouse).ProviderPath
     $install += @('--no-index', '--find-links', $Wheelhouse)
 }
-$install += @('-r', (Join-Path $script:AsterSourceRoot 'requirements-windows.txt'))
-if ($IncludeTests) { $install += @('-r', (Join-Path $script:AsterSourceRoot 'requirements-dev.txt')) }
+$lockName = 'requirements-windows-lock.txt'
+if ($IncludeTests) { $lockName = 'requirements-windows-test-lock.txt' }
+$lockPath = Join-Path $script:AsterSourceRoot $lockName
+if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) { throw "Tested dependency lock is missing: $lockName" }
+$install += @('-r', $lockPath)
 Invoke-AsterPython $python $install
 Invoke-AsterPython $python @('-m', 'pip', 'check')
 $dependencies = @(& $python -m pip freeze --all)
@@ -64,8 +74,12 @@ Invoke-AsterPython $python @('-c', "import json,sys; value=json.load(open(sys.ar
 $null = Assert-AsterCandidate $candidatePath $candidateId
 $protectedManifest = Join-Path $state 'candidate-manifest.json'
 Copy-Item -LiteralPath $candidatePath -Destination $protectedManifest -Force
+$operator = Join-Path $state 'operator-windows.ps1'
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'operator-windows.ps1') -Destination $operator -Force
+$operatorHash = (Get-FileHash -LiteralPath $operator -Algorithm SHA256).Hash.ToLowerInvariant()
 $config = [ordered]@{
     schema_version = 1; source_root = $script:AsterSourceRoot; python_executable = $python
+    workspace_root = $workspace; operator_script = $operator; operator_sha256 = $operatorHash
     oauth_db = (Join-Path $state 'windows-oauth.sqlite'); admin_clients = $allowlist
     public_origin = $PublicOrigin; port = $Port; candidate_id = $candidateId
     source_manifest = $protectedManifest; runtime_manifest = $runtimePath
@@ -73,4 +87,7 @@ $config = [ordered]@{
 }
 Write-AsterJson $configPath $config
 Protect-AsterState $state
-[pscustomobject]@{ status = 'configured'; config_path = $configPath; candidate_id = $candidateId; source_root = $script:AsterSourceRoot; python_executable = $python; dependency_inventory = (Join-Path $state 'python-dependencies.txt'); network_changes = $false; client_permissions_changed = $false } | ConvertTo-Json
+foreach ($controlFile in @($configPath, $protectedManifest, $operator, $allowlist)) {
+    Protect-AsterControlFileOwner $controlFile
+}
+[pscustomobject]@{ status = 'configured'; config_path = $configPath; candidate_id = $candidateId; source_root = $script:AsterSourceRoot; python_executable = $python; workspace_root = $workspace; emergency_operator = $operator; dependency_lock = $lockName; dependency_inventory = (Join-Path $state 'python-dependencies.txt'); network_changes = $false; client_permissions_changed = $false } | ConvertTo-Json

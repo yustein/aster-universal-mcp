@@ -42,6 +42,7 @@ def create_app():
             return token
         @mcp.tool()
         def list_directory(path: str = ".") -> dict:
+            """List a directory; relative paths use the configured default workspace."""
             authenticated()
             folder = Path(path).resolve()
             if not folder.is_dir():
@@ -49,10 +50,12 @@ def create_app():
             return {"path": str(folder), "entries": [p.name for p in list(folder.iterdir())[:100]]}
         @mcp.tool()
         def execute_command(command: list[str], cwd: str = ".", timeout: int = 30) -> dict:
+            """Run a command; omitted cwd uses the default workspace outside application source."""
             authenticated()
             return run_command(command, cwd, timeout)
         @mcp.tool()
         def start_background_job(command: list[str], cwd: str = ".", max_runtime: int = 3600) -> dict:
+            """Start a bounded job; omitted cwd uses the configured default workspace."""
             authenticated()
             return start_job(command, cwd, max_runtime)
         @mcp.tool()
@@ -101,6 +104,7 @@ if __name__ == "__main__":
     if not config_path:
         raise SystemExit("Use scripts/start-windows.ps1 with the protected Windows configuration.")
     config = load_configuration(config_path, source_root=ROOT)
+    os.chdir(config["workspace_root"])
     import logging
     import time
     logging.Formatter.converter = time.gmtime

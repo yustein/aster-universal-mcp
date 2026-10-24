@@ -21,6 +21,7 @@ ENV_KEYS = {
     "admin_clients": "ASTER_WINDOWS_ADMIN_CLIENTS",
     "port": "ASTER_WINDOWS_PORT",
     "runtime_manifest": "ASTER_WINDOWS_RUNTIME_MANIFEST",
+    "workspace_root": "ASTER_WINDOWS_WORKSPACE",
 }
 
 EXCLUDED_DIRECTORIES = {
@@ -65,6 +66,14 @@ def load_configuration(config_path, *, source_root, executable=None):
         raise ValueError("configuration belongs to a different source directory")
     if path.is_relative_to(root):
         raise ValueError("protected state must be outside the source directory")
+    workspace_value = config.get("workspace_root")
+    workspace = _absolute(workspace_value, "workspace_root")
+    if workspace != path.parent / "workspace" or not workspace.is_dir():
+        raise ValueError("workspace_root must be the protected configuration workspace directory")
+    workspace_info = Path(workspace_value).lstat()
+    if stat.S_ISLNK(workspace_info.st_mode) or getattr(workspace_info, "st_file_attributes", 0) & 0x400:
+        raise ValueError("workspace_root must not be a reparse point")
+    config["workspace_root"] = str(workspace)
     python = _absolute(config.get("python_executable"), "python_executable")
     if python != Path(executable or sys.executable).resolve():
         raise ValueError("configured Python interpreter does not match this process")
@@ -73,7 +82,7 @@ def load_configuration(config_path, *, source_root, executable=None):
         if item.parent != path.parent:
             raise ValueError(f"{key} must be in the protected configuration directory")
         config[key] = str(item)
-    protected_paths = [path] + [Path(config[key]) for key in
+    protected_paths = [path, workspace] + [Path(config[key]) for key in
         ("oauth_db", "admin_clients", "source_manifest", "runtime_manifest")]
     protected_paths.append(Path(config["runtime_manifest"]).with_suffix(".lock"))
     if len(set(protected_paths)) != len(protected_paths):
@@ -129,7 +138,7 @@ def load_configuration(config_path, *, source_root, executable=None):
         supplied = os.environ.get(environment)
         if supplied is not None:
             same = supplied == expected
-            if key in ("oauth_db", "admin_clients", "runtime_manifest"):
+            if key in ("oauth_db", "admin_clients", "runtime_manifest", "workspace_root"):
                 same = Path(supplied).is_absolute() and Path(supplied).resolve() == Path(expected)
             if not same:
                 raise ValueError(f"{environment} conflicts with the protected configuration")
@@ -204,7 +213,7 @@ def runtime_lease(config):
         locked = True
         value = {key: config[key] for key in (
             "source_root", "python_executable", "oauth_db", "admin_clients",
-            "public_origin", "port", "candidate_id")}
+            "public_origin", "port", "candidate_id", "workspace_root")}
         value.update(schema_version=1, pid=os.getpid(),
                      started_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"))
         value.update(_process_identity())
