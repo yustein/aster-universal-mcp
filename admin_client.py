@@ -1,8 +1,9 @@
 """Root-local Unix-socket client for administrator executor."""
 import json
+import os
 import socket
 
-SOCKET_PATH = "/run/aster-mcp-admin.sock"
+SOCKET_PATH = os.environ.get("ASTER_ADMIN_SOCKET", "/run/aster-mcp-admin.sock")
 
 def _request(payload, wait=15):
     raw = json.dumps(payload).encode("utf-8") + b"\n"
@@ -19,16 +20,16 @@ def _request(payload, wait=15):
                 if not chunk:
                     break
                 response.extend(chunk)
-                if len(response) > 65536:
+                if len(response) > 262144:
                     raise ValueError("executor response too large")
         return json.loads(response)
     except (OSError, ValueError, json.JSONDecodeError):
         return {"status": "error", "error": "executor communication failed", "exit_code": None}
 
 def run_admin(command: list[str], cwd: str = "/", timeout: int = 5):
-    if not isinstance(timeout, int) or not 1 <= timeout <= 300:
+    if type(timeout) is not int or not 1 <= timeout <= 300:
         return {"status": "rejected", "error": "timeout must be 1..300 seconds"}
-    return _request({"operation": "run", "command": command, "cwd": cwd, "timeout": timeout}, timeout + 5)
+    return _request({"operation": "run", "command": command, "cwd": cwd, "timeout": timeout}, timeout + 35)
 
 def start_admin_job(command: list[str], cwd: str = "/", max_runtime: int = 3600):
     return _request({"operation": "start_job", "command": command, "cwd": cwd, "max_runtime": max_runtime})
@@ -38,7 +39,7 @@ def get_admin_job(job_id: str):
 
 
 def cancel_admin_job(job_id: str):
-    return _request({"operation": "cancel_job", "job_id": job_id}, wait=20)
+    return _request({"operation": "cancel_job", "job_id": job_id}, wait=25)
 
 def begin_upload(destination, size, sha256):
     return _request({"operation":"begin_upload","destination":destination,"size":size,"sha256":sha256})

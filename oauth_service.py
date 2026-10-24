@@ -14,10 +14,11 @@ def create_app():
     origin=os.environ["ASTER_MCP_PUBLIC_ORIGIN"]
     db=os.environ["ASTER_MCP_OAUTH_DB"]
     root=os.environ["ASTER_ALLOWED_ROOT"]
-    if not os.path.isabs(db) or not os.path.isabs(root):
+    workspace=os.environ.get("ASTER_WORKSPACE", root)
+    if not os.path.isabs(db) or not os.path.isabs(root) or not os.path.isabs(workspace):
         raise ValueError("absolute paths required")
-    if not os.path.isdir(root):
-        raise ValueError("allowed root missing")
+    if not os.path.isdir(root) or not os.path.isdir(workspace):
+        raise ValueError("allowed root or workspace missing")
     def require_admin():
         token = get_access_token()
         if token is None:
@@ -31,17 +32,18 @@ def create_app():
     def register(server):
         @server.tool()
         def list_directory(path: str=".", limit: int=100)->dict:
+            """List within the configured root. Authentication is required; the administrative allowlist is not."""
             return enumerate_directory(path,root=root,limit=limit)
         @server.tool()
         def run_command(command: list[str], cwd: str = ".", timeout: int = 5) -> dict:
             """Execute commands through the local administrator executor with audit. Use an absolute cwd for full server access."""
             require_admin()
-            return run_admin(command, root if cwd == "." else cwd, timeout)
+            return run_admin(command, workspace if cwd == "." else cwd, timeout)
         @server.tool()
-        def start_job(command: list[str], cwd: str = "/", max_runtime: int = 3600) -> dict:
+        def start_job(command: list[str], cwd: str = ".", max_runtime: int = 3600) -> dict:
             """Start a background server job and return a job ID. Maximum runtime 86400 seconds."""
             require_admin()
-            return start_admin_job(command, root if cwd == "." else cwd, max_runtime)
+            return start_admin_job(command, workspace if cwd == "." else cwd, max_runtime)
         @server.tool()
         def job_status(job_id: str) -> dict:
             """Get durable job status, exit code, and bounded output by job ID."""
@@ -87,6 +89,7 @@ def create_app():
     return OAuthHTTPDiagnostics(PublicOriginGate(app,public_origin=origin))
 
 def main():
+    os.chdir(os.environ.get("ASTER_WORKSPACE", os.environ["ASTER_ALLOWED_ROOT"]))
     uvicorn.run(create_app(),host="127.0.0.1",
                 port=int(os.environ.get("ASTER_MCP_PORT","8767")),
                 proxy_headers=False,access_log=False)
