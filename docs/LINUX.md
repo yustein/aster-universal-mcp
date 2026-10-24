@@ -1,14 +1,14 @@
-# Linux v0.1.0b3 candidate: install, connect and operate
+# Linux v0.1.0b3 beta: install, connect and operate
 
-The intended next release is shared **`v0.1.0b3`**, with separate Windows and Linux archives under one tag. It is currently a candidate: no passed b3 acceptance record, published download availability or actual-account result is claimed here. Primary installation examples below name the proposed Linux b3 package and new source/venv paths.
+The shared **[v0.1.0b3 release](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b3)** has separate Windows and Linux archives under one tag. Linux's exact artifact passed 151 native tests plus 7 subtests with 10 skips, fresh runtime-only installation, 14 controlled local HTTP stages and 25 controlled public HTTPS stages. These overlapping layers are not added. The owner explicitly waived repeating actual Claude-account testing for this update; no fresh b3 actual-account success is claimed.
 
-**Acceptance is artifact-specific.** These instructions and a successful package build alone do not establish release acceptance. Install b3 as a release only when `linux-beta-0.1.0b3-acceptance.json` identifies the exact archive and marks the required gates passed. [Release status](RELEASE_STATUS.md) keeps portable tests, native Linux tests, public HTTPS tests and actual Claude-account observations separate. Candidate testing uses isolated state/listeners; the working b2 connection remains unchanged until a separately qualified upgrade.
+**Acceptance is artifact-specific.** Verify the archive against [linux-beta-0.1.0b3-acceptance.json](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/linux-beta-0.1.0b3-acceptance.json), which records satisfied release requirements, final reconciliation and the account-test waiver. [Release status](RELEASE_STATUS.md) separates development/shared tests, native Linux tests, public HTTPS and account observations. The source/tag remains tested commit `6d792d0920875bf3cb958b83744cca7a5fc1ec1e`; packaged candidate documentation was frozen before qualification. The [matching release/operator guide](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/ASTER_0.1.0b3_RELEASE_OPERATOR_ONBOARDING_GUIDE.md) supplies the final status. Preserve existing live b2 state during any separately verified upgrade.
 
-**Historical boundary:** the [Linux `v0.1.0b2` release](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2), published on 24 October 2026 from `c2ec9ce1d258d80c4922c190212ff5681f05c128`, remains immutable. It has no `connection_status` and confines listing even after approval. The [version/behavior table](ONBOARDING.md#paths-and-directory-listing) distinguishes it from b3's intended behavior. Updating documentation/main does not upgrade that installation or extend its acceptance evidence.
+**Historical boundary:** the [Linux `v0.1.0b2` release](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b2), published on 24 October 2026 from `c2ec9ce1d258d80c4922c190212ff5681f05c128`, remains immutable. It has no `connection_status` and confines listing even after approval. The [version/behavior table](ONBOARDING.md#paths-and-directory-listing) distinguishes it from b3. Updating documentation/main does not upgrade that installation or extend its acceptance evidence.
 
-The mandatory onboarding sequence is **install/start → OAuth pair → inspect the exact client ID and callback in a trusted local administrator terminal → approve it → check the upcoming candidate's `connection_status` → run native hostname/identity calls → mark setup complete only after success**. The [shared onboarding guide](ONBOARDING.md) gives both platform flows. Root permission is never automatic.
+Every new installation requires **install/start → OAuth pair → inspect the exact client ID and callback in a trusted local administrator terminal → approve it → check `connection_status` → run native hostname/identity calls → mark setup complete only after success**. The release owner's waiver does not remove these setup checks. The [shared onboarding guide](ONBOARDING.md) gives both platform flows. Root permission is never automatic.
 
-The intended b3 deployment target remains **Ubuntu 24.04 LTS x86_64 with distribution Python 3.12 and a functioning system systemd manager**, matching the b2 reference scope. Exact OS, kernel, Python, systemd, dependency versions and new results belong in b3's own acceptance record. Other distros, architectures, Python versions, WSL/container environments and macOS are outside this intended target; b3 qualification is still pending.
+The qualified reference scope is **Ubuntu 24.04 LTS x86_64 with distribution Python 3.12 and a functioning system systemd manager with cgroup v2**. The b3 guest reported Ubuntu 24.04.5 LTS, kernel 6.8.0-147-generic, Python 3.12.3 and systemd 255.4-1ubuntu8.18. Exact dependencies and UTC observations are in b3's acceptance/dependency records. Other distros, architectures, Python versions, WSL/container environments and macOS are not qualified by this evidence.
 
 Aster runs a root OAuth gateway and a separate root Unix-socket executor. Owner-approved commands and jobs run as root. Use a disposable VM first and retain SSH, QEMU Guest Agent or another independent local administrator channel. [Read the security boundaries](../SECURITY.md) before exposing the endpoint.
 
@@ -37,7 +37,7 @@ This package does not install persistent gateway/executor services or advertise 
 
 ## Files and canonical layout
 
-The planned Linux artifact is `aster-universal-mcp-0.1.0b3-linux.tar.gz`, with source files at its root and Linux modes preserved. For candidate testing use its exact frozen bytes and embedded `candidate-manifest.json`. After qualification/publication, obtain matching checksums, `linux-beta-0.1.0b3-acceptance.json`, Linux test evidence and the Linux operator guide from the same shared prerelease. No availability or passed result is implied by these proposed names. Confirm the platform-specific acceptance record's source/manifest/archive identity before installing it as a release.
+Download [aster-universal-mcp-0.1.0b3-linux.tar.gz](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/aster-universal-mcp-0.1.0b3-linux.tar.gz), [SHA256SUMS.txt](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/SHA256SUMS.txt), [linux-candidate-manifest.json](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/linux-candidate-manifest.json) and the matching acceptance record from the same release. The archive has source files at its root, preserved Linux modes and an embedded `candidate-manifest.json`. The shared guide is named `ASTER_0.1.0b3_RELEASE_OPERATOR_ONBOARDING_GUIDE.md`; Linux evidence is `linux-beta-0.1.0b3-test-evidence.zip`. Confirm the acceptance record's source/manifest/archive identity before installation.
 
 | Purpose | Reference path |
 |---|---|
@@ -151,7 +151,7 @@ sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
 
 The code has 12 characters, displayed in groups of four, and defaults to a 900-second lifetime. `pair --ttl 300` can shorten its lifetime; the supported range is 30–900 seconds. It is printed only to the local caller, not the operator journal. Enter it only at your own Aster HTTPS origin and finish the redirect to Claude. Do not save it in public logs or issue replacements casually: issuing another code invalidates the earlier one, and owner-code lifetime is distinct from the pending browser request and nonce lifetimes.
 
-OAuth pairing does not grant privileged execution. A successful authenticated `list_directory` call is not proof of administrative approval: published b2 confines every caller to its configured root, and the upcoming candidate still permits confined listing before approval. In the trusted local administrator terminal, inspect registered clients:
+OAuth pairing does not grant privileged execution. A successful authenticated `list_directory` call is not proof of administrative approval: published b2 confines every caller to its configured root, and b3 still permits confined listing before approval. In the trusted local administrator terminal, inspect registered clients:
 
 ```bash
 sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
@@ -165,11 +165,11 @@ sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
   --state /var/lib/aster-universal-mcp approve CLIENT_ID
 ```
 
-Run `clients` again and confirm the intended registration has `admin_allowed: true`. In published b2 this grant does not widen listing. In the upcoming candidate it permits explicit absolute-path listing outside the configured root; relative listing remains confined. New pairing and approval require the verified candidate and both canonical running processes. Never approve an unexpected client or expose local operator actions as remote MCP tools. If pairing fails, capture the single failed transaction's sanitized metadata and diagnose it before asking for another attempt.
+Run `clients` again and confirm the intended registration has `admin_allowed: true`. In published b2 this grant does not widen listing. In b3 it permits explicit absolute-path listing outside the configured root; relative listing remains confined. New pairing and approval require the verified candidate and both canonical running processes. Never approve an unexpected client or expose local operator actions as remote MCP tools. If pairing fails, capture the single failed transaction's sanitized metadata and diagnose it before asking for another attempt.
 
 ## Verify this connection and complete onboarding
 
-**Upcoming candidate only:** from the intended connector, call `connection_status` with `{}`. Compare its `client_id` with the one approved locally. Require `status: "approved"`, `admin_approved: true` and the relevant `permissions` flags. Check `default_workspace`, `listing_base` and `directory_listing` before requesting files or execution. The authenticated status tool reports only the caller and never changes grants.
+**For b3:** from the intended connector, call `connection_status` with `{}`. Compare its `client_id` with the one approved locally. Require `status: "approved"`, `admin_approved: true` and the relevant `permissions` flags. Check `default_workspace`, `listing_base` and `directory_listing` before requesting files or execution. The authenticated status tool reports only the caller and never changes grants.
 
 If status says `approval_required` or a privileged call returns the actionable `ADMIN_APPROVAL_REQUIRED` tool error, return to local client inspection and exact approval. `AUTHORIZATION_STATE_UNAVAILABLE` requires local diagnosis of protected allowlist state. Neither condition should trigger automatic root grants or blind repeated pairing. Published b2 lacks `connection_status`; its operator `clients` check and actual native calls remain the documented verification for that artifact.
 
@@ -191,17 +191,17 @@ Derive calls from the Linux server's actual tool schema. Linux names and result 
 
 | Linux tool | Behavior |
 |---|---|
-| `connection_status` | Upcoming candidate only: authenticated caller ID/approval flags, permissions, workspace/listing scope and local-owner next step; does not grant access |
-| `list_directory` | Default `path="."`; published b2 confines all clients to configured root. Upcoming candidate confines unapproved clients and all relative paths; approved explicit absolute paths may reach other root-accessible directories |
+| `connection_status` | b3: authenticated caller ID/approval flags, permissions, workspace/listing scope and local-owner next step; does not grant access |
+| `list_directory` | Default `path="."`; published b2 confines all clients to configured root. b3 confines unapproved clients and all relative paths; approved explicit absolute paths may reach other root-accessible directories |
 | `run_command` | Exact argv list in the `command` argument, structured exit/stdout/stderr and bounded timeout; omitted `cwd` uses the workspace |
 | `start_job` | Background command in a transient systemd service; omitted `cwd` uses the same workspace |
 | `job_status`, `cancel_job` | Inspect/cancel the exact job and reconcile its recorded unit/process identity |
 | `begin_upload`, `upload_chunk`, `finish_upload` | New absolute destination, sequential chunks and size/SHA-256 verification; refuse overwrite |
 | `download_info`, `download_chunk` | File size/hash plus bounded base64 chunks |
 
-Published b2 requires an administrative grant for every tool except listing. The upcoming candidate also allows authenticated `connection_status` without that grant; commands, jobs and transfers still check it on every invocation, including calls with renewed OAuth tokens. Status reports current permissions and paths; it is not native execution evidence.
+Published b2 requires an administrative grant for every tool except listing. B3 also allows authenticated `connection_status` without that grant; commands, jobs and transfers still check it on every invocation, including calls with renewed OAuth tokens. Status reports current permissions and paths; it is not native execution evidence.
 
-In the canonical setup, `.` and relative listing paths begin at the workspace. A deliberately separate `ASTER_ALLOWED_ROOT` remains the listing base even if `ASTER_WORKSPACE` differs; the upcoming status tool reports `listing_base` separately from command/job `default_workspace`. Relative Linux listing paths cannot escape that base, including after approval. Approved clients in the upcoming candidate may choose explicit absolute paths such as:
+In the canonical setup, `.` and relative listing paths begin at the workspace. A deliberately separate `ASTER_ALLOWED_ROOT` remains the listing base even if `ASTER_WORKSPACE` differs; the b3 status tool reports `listing_base` separately from command/job `default_workspace`. Relative Linux listing paths cannot escape that base, including after approval. Approved clients in b3 may choose explicit absolute paths such as:
 
 ```json
 {"path":"/"}
@@ -209,11 +209,11 @@ In the canonical setup, `.` and relative listing paths begin at the workspace. A
 {"path":"."}
 ```
 
-Published b2 still rejects absolute paths outside its configured listing root. The upcoming candidate permits them only while approved and only where the root process can read. Revocation restores confinement on subsequent requests. This listing policy does not confine an approved root command or transfer.
+Published b2 still rejects absolute paths outside its configured listing root. B3 permits them only while approved and only where the root process can read. Revocation restores confinement on subsequent requests. This listing policy does not confine an approved root command or transfer.
 
 Every command/job has its own cwd. Running `cd` inside one command does not change the next MCP call or listing base. Supply `cwd` explicitly on each call that needs another directory; `cd` is a shell builtin, not a persistent MCP session setting.
 
-The upcoming listing implementation accepts `limit` from 1 to 200 (default 100), reads at most that limit plus one entry to detect truncation, then sorts only the bounded sample. It retains Linux entry metadata and adds an honest completeness result: truncated responses have `total: null` and `total_is_exact: false`; only a complete enumeration within the bound has an exact total. Do not interpret returned-entry count as directory size or assume the old b2 result shape includes the new metadata. Listing bounds are not filesystem resource quotas or recursive-inventory guarantees.
+The b3 listing implementation accepts `limit` from 1 to 200 (default 100), reads at most that limit plus one entry to detect truncation, then sorts only the bounded sample. It retains Linux entry metadata and adds an honest completeness result: truncated responses have `total: null` and `total_is_exact: false`; only a complete enumeration within the bound has an exact total. Do not interpret returned-entry count as directory size or assume the old b2 result shape includes the new metadata. Listing bounds are not filesystem resource quotas or recursive-inventory guarantees.
 
 Commands and jobs run in transient systemd units so cancellation and timeout can cover their cgroups, including children that call `setsid`. Native acceptance must demonstrate actual worker/child exit and ceased file effects before claiming that behavior. Do not infer completion from a status label. A functioning system manager remains required in manual gateway mode.
 
@@ -243,7 +243,7 @@ sudo /usr/bin/python3 /var/lib/aster-universal-mcp/operator-linux.py \
   --state /var/lib/aster-universal-mcp revoke CLIENT_ID
 ```
 
-This blocks subsequent privileged tools for that client, including with existing or renewed access tokens. It does **not** revoke its OAuth credentials, cancel previously accepted jobs, undo completed changes or remove authenticated configured-root listing. In the upcoming candidate it removes broader absolute-path listing permission and restores confinement; authenticated `connection_status` remains available. Published b2 listing was confined before approval as well.
+This blocks subsequent privileged tools for that client, including with existing or renewed access tokens. It does **not** revoke its OAuth credentials, cancel previously accepted jobs, undo completed changes or remove authenticated configured-root listing. In b3 it removes broader absolute-path listing permission and restores confinement; authenticated `connection_status` remains available. Published b2 listing was confined before approval as well.
 
 To disable **all remote access** through this deployment:
 
@@ -283,4 +283,4 @@ Disable the application, verify both identified processes have stopped, disable 
 
 Public acceptance evidence must identify the frozen source commit/tree, manifest/archive hashes, actual environment, dependency record, harness, each test layer, real account observations and final cleanup. Keep failures and their later reconciliation. Never include live codes, tokens, cookies, token digests, credential-bearing SQLite files or recovery credentials in release assets.
 
-The software remains Apache-2.0 with voluntary donations and no required paid license or activation. Linux and Windows `v0.1.0b3` qualification/publication remain pending until new exact-artifact evidence supports them. Historical Linux `v0.1.0b2` and Windows `v0.1.0b1` releases, assets and working connections remain unchanged; their evidence must not be relabeled as b3 acceptance.
+The software remains Apache-2.0 with voluntary donations and no required paid license or activation. The b3 release records backend/final-reconciliation qualification and an explicit waiver of repeat actual-account testing; it does not claim that test was performed. Historical Linux `v0.1.0b2` and Windows `v0.1.0b1` releases and assets remain unchanged; their evidence must not be relabeled as b3 acceptance. Preserve existing working connections when installing or upgrading another deployment.

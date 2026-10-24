@@ -1,22 +1,22 @@
-# Windows v0.1.0b3 candidate: install, connect and operate
+# Windows v0.1.0b3 beta: install, connect and operate
 
 This guide installs the manually started, source-based Windows beta. Use a disposable Windows machine first and keep an elevated local PowerShell session available. Commands run with the gateway account's privileges. Read [SECURITY.md](../SECURITY.md) before approving a remote client.
 
-The intended b3 qualification target is **Windows 11 Enterprise Evaluation 26H2 build 26300.9457 and Python 3.11.9 x64**, the accepted b1 reference environment. B3 must record its own exact environment and new results. Windows 10, other Windows builds and other Python versions are outside this intended target; b3 qualification is still pending.
+The b3 reference system reported **Windows 11 Enterprise Evaluation build 26300 and Python 3.11.9 x64**, with manual SYSTEM operation. Its exact artifact passed 126 native tests plus 7 subtests with 5 skips, a fresh runtime-only installation and 38 controlled public HTTPS stages. The earlier local HTTP attempt passed 11 stages before an external stopped-listener observer failed; it remains partial/failed. Independent reconciliation and the public run closed its remaining restart/revocation/cleanup cases. Test layers overlap and are not added. Windows 10, other Windows builds and other Python versions are not qualified by these results.
 
-**Candidate, not yet a qualified published release:** primary installation examples below target the intended Windows `v0.1.0b3` archive. Windows and Linux are planned as separate artifacts under the same new tag. The candidate adds `connection_status`, actionable permission errors and bounded-listing metadata, and requires new artifact-specific testing/publication. Historical Windows `v0.1.0b1` remains unchanged; its accepted results do not qualify b3. See the [version/behavior table](ONBOARDING.md#paths-and-directory-listing). Do not copy new source files into a frozen b1 installation.
+**[v0.1.0b3](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b3) is qualified with the owner's explicit waiver of repeat Claude-account testing.** No fresh b3 actual-account success is claimed. Windows and Linux have separate artifacts under that shared tag. B3 adds `connection_status`, actionable permission errors and bounded-listing metadata. Its source/tag remains tested commit `6d792d0920875bf3cb958b83744cca7a5fc1ec1e`; packaged candidate documentation was frozen before qualification. The [matching release/operator guide](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/ASTER_0.1.0b3_RELEASE_OPERATOR_ONBOARDING_GUIDE.md) and acceptance record supply the final status. Historical Windows `v0.1.0b1` remains unchanged; do not copy new source files into a frozen b1 installation.
 
-The mandatory onboarding sequence is **install/start → OAuth pair → inspect the exact client ID and callback in a trusted local administrator terminal → approve it → check the upcoming candidate's `connection_status` → run native hostname/identity calls → mark setup complete only after success**. [The shared onboarding guide](ONBOARDING.md) explains the states and version differences. No step grants administrator access automatically.
+Every new installation requires **install/start → OAuth pair → inspect the exact client ID and callback in a trusted local administrator terminal → approve it → check `connection_status` → run native hostname/identity calls → mark setup complete only after success**. The release owner's waiver does not remove these setup checks. [The shared onboarding guide](ONBOARDING.md) explains the states and version differences. No step grants administrator access automatically.
 
 ## 1. Obtain and verify the release package
 
-For controlled candidate testing, use the exact frozen artifact and manifest supplied for that test. After qualification/publication, obtain the matching assets from the project's [Releases page](https://github.com/yustein/aster-universal-mcp/releases). The planned b3 names below do not assert that downloads or passed acceptance records already exist:
+Obtain the matching assets from the [b3 release](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b3):
 
-- `aster-universal-mcp-0.1.0b3-windows.zip`
-- `SHA256SUMS.txt`
-- `windows-beta-0.1.0b3-acceptance.json`
+- [aster-universal-mcp-0.1.0b3-windows.zip](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/aster-universal-mcp-0.1.0b3-windows.zip)
+- [SHA256SUMS.txt](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/SHA256SUMS.txt)
+- [windows-beta-0.1.0b3-acceptance.json](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/windows-beta-0.1.0b3-acceptance.json)
 
-Check that the acceptance record names the same ZIP and records passed required gates. In the folder containing the downloads, calculate the ZIP hash and compare the complete value with its entry in the trusted release checksum file:
+Check that the acceptance record names the same ZIP, records satisfied backend/final-reconciliation requirements, and identifies the account-test waiver explicitly. The separate manifest asset is `windows-candidate-manifest.json`; the ZIP contains its embedded copy as `candidate-manifest.json`. In the folder containing the downloads, calculate the ZIP hash and compare the complete value with its entry in the trusted release checksum file:
 
 ~~~powershell
 Get-FileHash -LiteralPath .\aster-universal-mcp-0.1.0b3-windows.zip -Algorithm SHA256
@@ -42,7 +42,7 @@ You need an installed Python x64 interpreter, an administrator account, correct 
 | Runtime | `requirements-windows-lock.txt` |
 | Runtime plus tests | `requirements-windows-test-lock.txt` with `-IncludeTests` |
 
-Use a new source directory rather than upgrading packages in an active deployment. The examples below assume fresh protected state and an unused listener. Do not stop or reconfigure a working b1 connection merely to try the candidate; use an explicitly isolated candidate installation. The helper refuses an occupied port or an existing recorded live process, but that guard is not a migration or isolation procedure. Upgrade a live connection only after the new artifact is qualified and its state-preserving procedure is verified.
+Use a new source directory rather than upgrading packages in an active deployment. The examples below assume fresh protected state and an unused listener. Do not stop or reconfigure a working b1 connection merely to try b3; use a disposable machine or an explicitly verified isolated installation. The helper refuses an occupied port or an existing recorded live process, but that guard is not a migration or isolation procedure. Upgrade a live connection only after its state-preserving procedure is verified.
 
 In an **elevated PowerShell terminal**, change to the extracted source directory. Select the installed Python 3.11 interpreter explicitly:
 
@@ -55,10 +55,10 @@ If the launcher is unavailable, set `$asterPython` to the installed interpreter'
 
 Choose your real hostname now. Replace `https://mcp.yourdomain.example` throughout this guide with that **same bare HTTPS origin**, without `/mcp` or a trailing path.
 
-For an online installation:
+For an online runtime-only installation:
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1 -PublicOrigin https://mcp.yourdomain.example -PythonExecutable $asterPython -IncludeTests
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1 -PublicOrigin https://mcp.yourdomain.example -PythonExecutable $asterPython
 ~~~
 
 The `Bypass` option is scoped to this launched process; it does not change the computer's permanent execution policy. Run helpers only from the verified release.
@@ -66,16 +66,16 @@ The `Bypass` option is scoped to this launched process; it does not change the c
 For offline installation, prepare the wheels on an Internet-connected Windows x64 machine using the same Python version and the chosen lock file:
 
 ~~~powershell
-& $asterPython -m pip download --only-binary=:all: --requirement .\requirements-windows-test-lock.txt --dest C:\AsterDownloads\wheels
+& $asterPython -m pip download --only-binary=:all: --requirement .\requirements-windows-lock.txt --dest C:\AsterDownloads\wheels
 ~~~
 
 Transfer the release assets and wheel directory to the offline machine. Then use:
 
 ~~~powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1 -PublicOrigin https://mcp.yourdomain.example -PythonExecutable $asterPython -Wheelhouse D:\wheels -IncludeTests
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup-windows.ps1 -PublicOrigin https://mcp.yourdomain.example -PythonExecutable $asterPython -Wheelhouse D:\wheels
 ~~~
 
-Adjust the wheel-directory path. The helper adds `--no-index`, so a missing wheel fails installation rather than falling back to the network. The runtime lock can be used instead when tests are not requested. The optional wheel directory belongs outside frozen source.
+Adjust the wheel-directory path. The helper adds `--no-index`, so a missing wheel fails installation rather than falling back to the network. Keep test dependencies in a separate test installation: `-IncludeTests` selects `requirements-windows-test-lock.txt` there. Complete fresh runtime-only installation checks before test packages could conceal missing runtime imports. The optional wheel directory belongs outside frozen source.
 
 Setup verifies the source, installs into `.venv` using the selected exact dependency list, runs `pip check`, records the installed inventory and protects the state directory. Its final JSON must say `configured`. Retain its candidate ID and dependency inventory for support.
 
@@ -97,7 +97,7 @@ Setup restricts the state directory and default workspace to SYSTEM and Administ
 
 Job and transfer roots can also be affected by an operator-supplied `ASTER_WINDOWS_DATA` environment variable. Record any such override. Stopping or disabling the gateway removes none of these files.
 
-Existing OAuth state and client grants are retained when setup runs again. That retention is not an isolated-candidate installation: do not invoke candidate setup against the working b1 state. Keep a private backup for an explicitly qualified upgrade; do not copy state from an unrelated machine or mix a new helper with an old running gateway.
+Existing OAuth state and client grants are retained when setup runs again. That retention is not an isolated-candidate installation: do not invoke new-release setup against the working b1 state. Keep a private backup for an explicitly qualified upgrade; do not copy state from an unrelated machine or mix a new helper with an old running gateway.
 
 ## 4. Start and verify the gateway
 
@@ -212,13 +212,13 @@ The intended ID must appear in the result. Setup, startup and pairing do not app
 
 ## 7. Check connection status and prove native execution
 
-**Upcoming candidate only:** enable the connector in the intended conversation and call `connection_status` with `{}`. Match its `client_id` to the locally approved ID; require `status: "approved"`, `admin_approved: true` and permission flags for commands, jobs, file transfers and directory listing. Inspect `default_workspace`, `listing_base` and `directory_listing` to confirm the intended paths/scope. This authenticated tool reports only its caller's state and never grants permission. Status is a diagnosis step, not proof that a native command ran.
+**For b3:** enable the connector in the intended conversation and call `connection_status` with `{}`. Match its `client_id` to the locally approved ID; require `status: "approved"`, `admin_approved: true` and permission flags for commands, jobs, file transfers and directory listing. Inspect `default_workspace`, `listing_base` and `directory_listing` to confirm the intended paths/scope. This authenticated tool reports only its caller's state and never grants permission. Status is a diagnosis step, not proof that a native command ran.
 
 If status reports `approval_required` or a privileged call returns `ADMIN_APPROVAL_REQUIRED`, inspect and approve the exact registration locally before retrying the harmless call. If `AUTHORIZATION_STATE_UNAVAILABLE` is returned, inspect the protected allowlist/configuration rather than treating it as ordinary missing approval. Do not repeat OAuth pairing to compensate for a missing local grant.
 
 Status requires valid OAuth authentication with `system:admin` scope. `OAUTH_SCOPE_REQUIRED` is a different failure: a local allowlist grant cannot add a missing OAuth scope. Review that credential flow and actual error separately.
 
-Published b1 has no `connection_status`; use its local `clients`/`allowed` check and the actual calls below. A missing tool on b1 is expected. The upcoming candidate must pass the new status check as well as native commands before its setup is called complete.
+Published b1 has no `connection_status`; use its local `clients`/`allowed` check and the actual calls below. A missing tool on b1 is expected. B3 must pass the new status check as well as native commands before its setup is called complete.
 
 Enable the connector in a Claude conversation. Ask it to call `execute_command` separately with:
 
@@ -235,7 +235,7 @@ For a background-job check, use a harmless command with an explicit short `max_r
 
 Access tokens last 15 minutes and the server implements rotating refresh tokens. Exercise another harmless command after that first token expires; record renewal and the successful tool result. A failure at that point needs diagnosis rather than an assumption that repeated manual pairing is required.
 
-To run the included component tests in a test installation:
+To run the included component tests in a separate test installation prepared with `-IncludeTests`:
 
 ~~~powershell
 .\.venv\Scripts\python.exe -m pytest -q tests
@@ -255,9 +255,9 @@ Windows `list_directory` requires the client's administrative grant on every cal
 
 Each command has its own working directory. `cd` inside a shell command affects only that process; it does not change the next `execute_command`, job or listing call. Supply `cwd` on every command needing another directory. There is no persistent interactive-shell directory state between MCP calls.
 
-Published b1 returns at most 100 entry names, without a completeness flag. The upcoming candidate keeps the path-only tool signature and fixed 100-entry response limit, reads at most 101 entries, and adds `limit`, `truncated`, `total` and `total_is_exact`. It sorts only the bounded sample. When truncated, `total` is null and `total_is_exact` is false; 100 returned names must not be described as the directory's full size. Access failures remain errors rather than fabricated empty directories.
+Published b1 returns at most 100 entry names, without a completeness flag. B3 keeps the path-only tool signature and fixed 100-entry response limit, reads at most 101 entries, and adds `limit`, `truncated`, `total` and `total_is_exact`. It sorts only the bounded sample. When truncated, `total` is null and `total_is_exact` is false; 100 returned names must not be described as the directory's full size. Access failures remain errors rather than fabricated empty directories.
 
-Revoking a client denies subsequent listings and other privileged tools. In the upcoming candidate, authenticated `connection_status` remains available to show its own revoked/unapproved state. Neither grant removal nor that status result revokes the OAuth credential family; use protected disable/stop for full remote shutdown.
+Revoking a client denies subsequent listings and other privileged tools. In b3, authenticated `connection_status` remains available to show its own revoked/unapproved state. Neither grant removal nor that status result revokes the OAuth credential family; use protected disable/stop for full remote shutdown.
 
 ## Disable access and stop
 
@@ -314,10 +314,10 @@ No helper performs a broad uninstall or deletes user work. Avoid deleting a shar
 | Source verification is blocked | Use the protected recovery helper if access must be disabled. Inspect changed/missing/extra files and restore trusted release bytes. Keep unexpected outputs outside source; do not refreeze unexplained changes. |
 | Gateway port is occupied | Identify its owner through status/runtime evidence. Stop only the intended verified process. |
 | Pairing page expired or code was rejected | Capture the error, begin a fresh authorization request, then issue one fresh code. The code and browser request have separate deadlines. |
-| Claude says connected but tools are denied | Upcoming candidate: call `connection_status`, compare its ID with local `clients`/`allowed`, then follow `ADMIN_APPROVAL_REQUIRED` guidance only after verifying the intended registration. Pairing does not approve administration. Published b1 uses the local check directly. |
+| Claude says connected but tools are denied | B3: call `connection_status`, compare its ID with local `clients`/`allowed`, then follow `ADMIN_APPROVAL_REQUIRED` guidance only after verifying the intended registration. Pairing does not approve administration. Published b1 uses the local check directly. |
 | `AUTHORIZATION_STATE_UNAVAILABLE` | Inspect protected allowlist ownership, readability and contents locally. Preserve unexpected state; do not turn this into a wildcard or automatic approval. |
-| `connection_status` is absent | Inspect the actual installed artifact/tool list. Published b1 does not contain this upcoming tool; a documentation update does not install it. |
-| A listing stops after 100 names | Inspect truncation metadata on the upcoming candidate; b1 lacks it. Do not infer the full directory total from a capped response. |
+| `connection_status` is absent | Inspect the actual installed artifact/tool list. Published b1 does not contain this b3 tool; a documentation update does not install it. |
+| A listing stops after 100 names | Inspect truncation metadata on b3; b1 lacks it. Do not infer the full directory total from a capped response. |
 | Discovery fails or the edge returns 403 | Check DNS, the dedicated tunnel and forwarded Host/HTTPS headers. An error without an Aster request ID may be from the edge. Do not weaken the gateway's origin checks. |
 | Commands fail after an idle period | Check the token/refresh exchange and actual request results. Keep bearer values out of diagnostics. |
 | A relative write changes the application source | Confirm the configured `workspace_root` and actual process identity belong to this release. Stop and diagnose a mixed or old deployment. |
