@@ -300,7 +300,7 @@
     },
     {
       "path": "tests/test_windows_gateway.py",
-      "sha256": "058be53840cd963bb007073b49ee5d610c2ede469534c76794db094c4d851d18"
+      "sha256": "70219bde97241db1196f2188a01ab600722429b6dfe96ca95faca4c439ba4575"
     },
     {
       "path": "tests/test_windows_runtime_identity.py",
