@@ -28,3 +28,4 @@ passwords.txt
 *.qcow2
 *.vhdx
 *.zip
+candidate-manifest.json
