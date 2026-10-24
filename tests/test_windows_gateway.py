@@ -34,7 +34,10 @@ def test_windows_oauth_requires_trusted_https_proxy_and_bearer(tmp_path, monkeyp
             "Accept": "application/json, text/event-stream",
         }
         transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 1234))
-        async with app.app.router.lifespan_context(app.app):
+        lifespan_app = app
+        while not hasattr(lifespan_app, "router"):
+            lifespan_app = lifespan_app.app
+        async with lifespan_app.router.lifespan_context(lifespan_app):
             async with httpx.AsyncClient(transport=transport, base_url=origin) as http:
                 payload = {
                     "jsonrpc": "2.0", "id": 1, "method": "tools/call",

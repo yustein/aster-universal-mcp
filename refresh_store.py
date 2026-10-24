@@ -54,3 +54,8 @@ class RefreshStore:
     def revoke_client(self,client_id: str)->None:
         with self._db() as db:
             db.execute("UPDATE refresh_tokens SET used=1 WHERE client_id=?",(client_id,))
+
+    def revoke(self,token: str)->None:
+        """Invalidate one refresh credential; unknown/already-used tokens are harmless."""
+        with self._db() as db:
+            db.execute("UPDATE refresh_tokens SET used=1 WHERE digest=?",(digest(token),))

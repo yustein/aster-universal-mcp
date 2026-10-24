@@ -1,8 +1,4 @@
-"""SDK v2 OAuth provider adapter (development-only).
-
-Integrates locally approved authorization-code records with the official
-MCP SDK provider contract. No public owner approval endpoint is exposed.
-"""
+"""OAuth provider integrating owner-approved grants with the MCP SDK contract."""
 import time
 import hashlib
 import sqlite3
@@ -149,4 +145,14 @@ class LocalOAuthProvider:
                            expires_at=row[0], resource=self.resource)
 
     async def revoke_token(self, token) -> None:
-        self.tokens.revoke(token.token)
+        """Invalidate the presented credential in its corresponding store.
+
+        This release keeps the public revocation endpoint disabled. The stores
+        do not associate access/refresh token families, so this method does not
+        claim the SDK's recommended associated-token revocation behavior.
+        Local operator allowlist removal blocks every token of that client.
+        """
+        if isinstance(token, RefreshToken):
+            self.refresh.revoke(token.token)
+        else:
+            self.tokens.revoke(token.token)
