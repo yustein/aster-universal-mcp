@@ -27,6 +27,7 @@ CALLS = {
     "aster_delegate_task": {"to_agent": "receiver", "request_id": "send-1",
                             "instruction": "Count the supplied items", "expected_result": "A count"},
     "aster_inbox": {},
+    "aster_outcomes": {},
     "aster_claim_task": {"request_id": "claim-1"},
     "aster_renew_lease": {"task_id": "task_test", "lease_token": "private-lease", "fence": 1},
     "aster_checkpoint_task": {"task_id": "task_test", "lease_token": "private-lease", "fence": 1,
@@ -228,11 +229,12 @@ def test_bad_allowlist_is_configuration_failure_not_permission_or_store_access(g
     assert g.store.calls == []
 
 
-def test_caller_supplied_principal_cannot_override_authenticated_identity(gateway_factory):
+@pytest.mark.parametrize("name", ["aster_profile", "aster_outcomes"])
+def test_caller_supplied_principal_cannot_override_authenticated_identity(gateway_factory, name):
     g = gateway_factory()
     with caller():
         try:
-            result = invoke(g.server, "aster_profile", {"client_id": "victim", "agent_id": "victim"})
+            result = invoke(g.server, name, {"client_id": "victim", "agent_id": "victim", "sender": "victim"})
         except ToolError:
             # A strict SDK input model may reject extra fields outright.
             assert g.store.calls == []
@@ -240,7 +242,28 @@ def test_caller_supplied_principal_cannot_override_authenticated_identity(gatewa
             # If unknown fields are ignored, identity still comes only from the
             # authenticated context, never from the unadvertised arguments.
             assert result["authenticated_client"] == "approved-client"
-            assert g.store.calls == [("profile", "approved-client", {})]
+            arguments = {"cursor": 0, "limit": 20} if name == "aster_outcomes" else {}
+            assert g.store.calls == [(name.removeprefix("aster_"), "approved-client", arguments)]
+
+
+@pytest.mark.parametrize("field", ["cursor", "limit"])
+@pytest.mark.parametrize("value", [True, "1", 1.0])
+def test_outcomes_pagination_is_not_coerced_before_storage(gateway_factory, field, value):
+    g = gateway_factory()
+    with caller(), pytest.raises(ToolError):
+        invoke(g.server, "aster_outcomes", {field: value})
+    assert g.store.calls == []
+
+
+def test_outcomes_forwards_paging_and_denies_disabled_sender(gateway_factory):
+    from coordination.store import CoordinationError
+    g = gateway_factory()
+    with caller():
+        invoke(g.server, "aster_outcomes", {"cursor": 42, "limit": 7})
+        assert g.store.calls == [("outcomes", "approved-client", {"cursor": 42, "limit": 7})]
+        g.store.failure = CoordinationError("AGENT_DISABLED", "Agent is disabled.")
+        with pytest.raises(ToolError, match="AGENT_DISABLED"):
+            invoke(g.server, "aster_outcomes")
 
 
 @pytest.mark.parametrize("value", [True, "1", 1.0])
@@ -304,7 +327,8 @@ def test_coordination_cannot_reuse_oauth_database_before_any_database_write(gate
     assert not database.exists()
 
 
-def test_real_oauth_wire_identity_and_allowlist_revocation(gateway_factory):
+@pytest.mark.parametrize("name", ["aster_profile", "aster_outcomes"])
+def test_real_oauth_wire_identity_and_allowlist_revocation(gateway_factory, name):
     """Exercise each platform's ASGI bearer middleware, not a mocked principal."""
     import httpx
     from client_registry import ClientRegistry
@@ -330,7 +354,7 @@ def test_real_oauth_wire_identity_and_allowlist_revocation(gateway_factory):
                 base_url=g.origin, headers=headers,
             ) as http:
                 payload = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-                           "params": {"name": "aster_profile", "arguments": {}}}
+                           "params": {"name": name, "arguments": {}}}
                 assert (await http.post("/mcp", json=payload)).status_code == 401
                 assert (await http.post("/mcp", json=payload,
                         headers={"Authorization": "Bearer " + wrong_resource})).status_code == 401
@@ -343,10 +367,17 @@ def test_real_oauth_wire_identity_and_allowlist_revocation(gateway_factory):
                 g.allowlist.write_text(json.dumps([client_id]))
                 approved = await http.post("/mcp", json=payload, headers=authenticated)
                 assert approved.status_code == 200 and not approved.json()["result"].get("isError", False)
-                assert g.store.calls == [("profile", client_id, {})]
+                arguments = {"cursor": 0, "limit": 20} if name == "aster_outcomes" else {}
+                expected_calls = [(name.removeprefix("aster_"), client_id, arguments)]
+                assert g.store.calls == expected_calls
                 g.allowlist.write_text("[]")
                 revoked = await http.post("/mcp", json=payload, headers=authenticated)
                 assert revoked.status_code == 200 and revoked.json()["result"]["isError"]
                 assert "ADMIN_APPROVAL_REQUIRED" in revoked.text and access not in revoked.text
-                assert g.store.calls == [("profile", client_id, {})]
+                assert g.store.calls == expected_calls
+                g.allowlist.write_text(json.dumps([client_id]))
+                ClientRegistry(str(g.database)).revoke(client_id)
+                revoked_client = await http.post("/mcp", json=payload, headers=authenticated)
+                assert revoked_client.status_code == 401
+                assert g.store.calls == expected_calls
     asyncio.run(asyncio.wait_for(check(), timeout=15))

@@ -71,6 +71,11 @@ def register_coordination_tools(server, *, db_path: str, allowlist_path: str | P
         return invoke("inbox", limit=limit)
 
     @server.tool()
+    def aster_outcomes(cursor: StrictInt = 0, limit: StrictInt = 20) -> dict:
+        """Read your persisted sender outcomes, including accepted results. Resume with next_cursor; pages are bounded by count and bytes. Later verification may repeat a task with the same outcome_id. This read neither advances expiry nor verifies, acknowledges, or publishes a result; native readiness is not required."""
+        return invoke("outcomes", cursor=cursor, limit=limit)
+
+    @server.tool()
     def aster_claim_task(
         request_id: str, task_id: str | None = None, lease_seconds: StrictInt = 300,
     ) -> dict:

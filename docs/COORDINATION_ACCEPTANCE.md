@@ -11,7 +11,7 @@ Windows/Linux b1, b2 and b3 tags, packages and acceptance records are unchanged.
 ## Implemented scope
 
 - A separate durable SQLite task store, authenticated-client agent enrollment,
-  explicit directional delegation grants and twelve `aster_*` MCP tools.
+  explicit directional delegation grants and thirteen `aster_*` MCP tools.
 - Atomic exclusive claims, renewable leases, monotonically increasing fencing
   numbers, optimistic checkpoints, immutable completion retries and explicit
   reconciliation of uncertain effects.
@@ -30,7 +30,11 @@ The [operator guide](AGENT_COORDINATION.md) describes setup and recovery. The
 [provenance record](COORDINATION_PROVENANCE.md) identifies the existing owned
 bridge, PA contract and session-binding work used in this adaptation.
 
-## Final local regression result
+## Baseline local regression result
+
+The following full-suite and packaging results describe the baseline at
+`d94a337`, before the focused recovery and sender-outcome follow-ups. Later
+focused runs are reported separately; they are not added to this full-suite total.
 
 Command, run from the repository with a dedicated Python environment:
 
@@ -70,7 +74,41 @@ an in-memory bearer-checking transport; actual Aster OAuth/resource handling is
 covered separately by the tool and native suites. Provider labels in fixtures do
 not constitute live ChatGPT or Anthropic account calls.
 
-## Packaging and review
+## Sender-outcome follow-up
+
+The follow-up adds `aster_outcomes(cursor=0, limit=20)`: an authenticated,
+sender-scoped, read-only inbox of current persisted outcomes, including already
+accepted results. It provides count- and byte-bounded pagination and a versioned
+semantic outcome ID that remains stable across sender verification and native
+redelivery. It performs no expiry maintenance or publication acknowledgement.
+
+New native notices also include the original event revision and recipient role.
+These additive fields remain optional so retained legacy webhook bodies keep
+their original signed bytes. The operator guide now requires an explicit visible
+host reply for a completed task and separates that observation from transport,
+execution and sender acceptance.
+
+Focused validation on the follow-up source:
+
+| Test selection | Observed result |
+| --- | --- |
+| Coordination store and MCP tools | 122 passed in 7.97s |
+| Native receiving | 44 passed in 5.05s |
+| Operator and companion composition | 6 passed in 1.06s |
+
+The new coverage checks exact sender isolation and current authorization, paused
+native senders, retained accepted results, all six outcome states, restart and
+page recovery, canonical JSON identities, maximal legal outcome records, no
+cursor skips under the response budget, and unchanged legacy retry bytes.
+Independent source/test review and `git diff --check` passed. These are focused
+local checks, not a repeated full-suite or new release packaging qualification.
+Live task execution and visible host publication require separate observations.
+The operator tests ran in the approved offline execution environment after the
+restricted runner stalled on an AnyIO thread-return wakeup. A minimal
+non-Aster reproducer isolated the same restriction; no product or test code was
+changed to bypass the meaningful synchronous-tool check.
+
+## Baseline packaging and review
 
 The declared build-isolation workflow successfully built
 `aster_universal_mcp-0.2.0a1-py3-none-any.whl`. It was installed without dependency

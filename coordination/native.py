@@ -268,13 +268,25 @@ class UnsubscribeParams(RequestParams):
 
 EVENT_DEFINITION = {
     "name": EVENT_NAME,
-    "description": "Changes addressed to this registered agent. Enrollment first delivers a content-free probe. Task notices require operator verification of the actual host destination. Read/claim the referenced task; webhook acceptance never means execution or completion. Delivery may repeat.",
+    "description": (
+        "Changes addressed to this registered agent. Enrollment first delivers a content-free probe. "
+        "Task notices require operator verification of the actual host destination. "
+        "For receiver notices, use aster_task_status and claim only that exact queued assignment. "
+        "For sender notices, use aster_outcomes or aster_task_status to inspect saved outcomes; "
+        "never claim a completed sender task. "
+        "Task status is authoritative because notices may be stale or repeated. "
+        "HTTP 200 acknowledges transport only, not execution, completion or a visible user notification."
+    ),
     "delivery": ["webhook"],
     "inputSchema": EventArguments.model_json_schema(),
     "payloadSchema": {"type": "object", "properties": {
         "agent_id": {"type": "string"}, "event_type": {"type": "string"},
         "task_id": {"type": ["string", "null"]}, "status": {"type": ["string", "null"]},
-        "probe_id": {"type": ["string", "null"]}},
+        "probe_id": {"type": ["string", "null"]},
+        "revision": {"type": ["integer", "null"], "minimum": 0},
+        "recipient_role": {"type": ["string", "null"], "enum": ["sender", "receiver", None]}},
+        # Retained outbox bodies predate role/revision metadata. Keep these
+        # additions optional so retries preserve their original signed bytes.
         "required": ["agent_id", "event_type", "task_id", "status", "probe_id"],
         "additionalProperties": False},
 }
@@ -490,18 +502,32 @@ class NativeEvents:
             db.execute("UPDATE coord_native_outbox SET status='cancelled',lease_token=NULL WHERE subscription_id=? AND status IN ('pending','inflight')", (subscription_id,))
 
     @staticmethod
-    def _envelope(event_id, at, agent_id, event_type, task_id, status, probe_id=None):
+    def _envelope(event_id, at, agent_id, event_type, task_id, status, probe_id=None,
+                  *, revision=None, recipient_role=None):
         return {"eventId": event_id, "name": EVENT_NAME, "timestamp": _iso(at), "cursor": None,
                 "data": {"agent_id": agent_id, "event_type": event_type,
-                         "task_id": task_id, "status": status, "probe_id": probe_id}}
+                         "task_id": task_id, "status": status, "probe_id": probe_id,
+                         "revision": revision, "recipient_role": recipient_role}}
 
     def _task_envelope(self, event, subscription):
         # A notification's delivery epoch changes on fresh receiver enrollment,
         # not on key rotation. The durable work ID and claim semantics do not.
         identity = json.dumps([subscription["id"], subscription["delivery_epoch"], event["event_id"]], separators=(",", ":"))
         event_id = "evt_" + hashlib.sha256(identity.encode()).hexdigest()
+        payload = event["payload"]
+        # Route from the stored event snapshot, not the task's later state.
+        # Queued assignments address receivers; progress/outcomes address senders.
+        if event["event_type"] == "task.queued" and event["recipient"] == payload.get("receiver"):
+            recipient_role = "receiver"
+        elif event["recipient"] == payload.get("sender"):
+            recipient_role = "sender"
+        elif event["recipient"] == payload.get("receiver"):
+            recipient_role = "receiver"
+        else:
+            recipient_role = None
         return self._envelope(event_id, event["created_at"], event["recipient"],
-            event["event_type"], event["task_id"], event["payload"].get("status"))
+            event["event_type"], event["task_id"], payload.get("status"),
+            revision=payload.get("revision"), recipient_role=recipient_role)
 
     def _enqueue(self, subscription_id, envelope, kind, *, epoch, db=None):
         values = (subscription_id, envelope["eventId"], json.dumps(envelope, separators=(",", ":")),

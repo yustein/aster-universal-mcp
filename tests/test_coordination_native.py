@@ -17,7 +17,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from client_registry import ClientRegistry
 from coordination.native import (
-    CALLBACK_TIMEOUT, EVENT_NAME, MAX_RESPONSE_BYTES, NativeEvents,
+    CALLBACK_TIMEOUT, EVENT_DEFINITION, EVENT_NAME, MAX_RESPONSE_BYTES, NativeEvents,
     CallbackError, callback_url, install_native_events, public_address,
     public_https_post, signature_headers, signing_key,
 )
@@ -220,6 +220,8 @@ def test_probe_precedes_host_verification_and_transport_never_completes_task(env
     assert len(events) == 1
     assert events[0][1]["data"]["event_type"] == "receiver.probe"
     assert events[0][1]["data"]["task_id"] is None
+    assert events[0][1]["data"]["revision"] is None
+    assert events[0][1]["data"]["recipient_role"] is None
     with pytest.raises(CoordinationError, match="RECEIVER_NOT_READY"):
         env["store"].claim_task("worker-client", request_id="before-verification")
     with pytest.raises(CoordinationError, match="WRONG_RECEIVER"):
@@ -229,10 +231,55 @@ def test_probe_precedes_host_verification_and_transport_never_completes_task(env
     asyncio.run(env["native"].run_once())
     notice = env["post"].events()[-1]
     assert notice[1]["data"]["task_id"] == task["task_id"]
+    assert notice[1]["data"]["revision"] == task["revision"]
+    assert notice[1]["data"]["recipient_role"] == "receiver"
     assert b"PRIVATE" not in notice[3]
     assert env["store"].task_status("source-client", task_id=task["task_id"])["status"] == "queued"
     receipt = [r for r in env["native"].receipts("worker-client", subscription["id"]) if r["kind"] == "task"][0]
     assert receipt["status"] == "accepted" and receipt["last_status"] == 200
+
+
+def test_notices_preserve_event_revision_and_distinguish_sender_outcomes_from_assignments(env):
+    receiver = subscribe(env)
+    verify(env, receiver)
+    sender = subscribe(env, "source")
+    verify(env, sender, "source")
+    asyncio.run(env["native"].run_once())
+    task = delegate(env)
+    claim = env["store"].claim_task("worker-client", request_id="review-claim", task_id=task["task_id"])
+    credentials = {"task_id": task["task_id"], "lease_token": claim["lease_token"], "fence": claim["fence"]}
+    checkpoint = env["store"].checkpoint_task("worker-client", **credentials,
+        expected_revision=claim["task"]["revision"], checkpoint={"progress": "PRIVATE checkpoint"})
+    completed = env["store"].complete_task("worker-client", **credentials,
+        result={"summary": "PRIVATE result"}, evidence={"source": "PRIVATE evidence"})
+    verified = env["store"].verify_result("source-client", task_id=task["task_id"],
+        expected_revision=completed["revision"], accepted=True,
+        evidence={"checks": ["PRIVATE sender check"], "reference": "PRIVATE reference"})
+    asyncio.run(env["native"].run_once())
+    notices = [call for call in env["post"].events() if call[1]["data"]["task_id"] == task["task_id"]]
+    assignments = [call[1]["data"] for call in notices if call[1]["data"]["agent_id"] == "worker"]
+    assert len(assignments) == 1
+    assert assignments[0]["event_type"] == "task.queued"
+    assert assignments[0]["recipient_role"] == "receiver"
+    assert assignments[0]["revision"] == task["revision"] == 0
+    # A delayed queued notice is a snapshot, not permission to execute work
+    # whose current status has already changed.
+    assert env["store"].task_status("worker-client", task_id=task["task_id"])["revision"] == verified["revision"]
+    updates = [call[1]["data"] for call in notices if call[1]["data"]["agent_id"] == "source"]
+    assert all(data["recipient_role"] == "sender" for data in updates)
+    assert sorted((data["revision"], data["event_type"]) for data in updates) == [
+        (claim["task"]["revision"], "task.updated"),
+        (checkpoint["revision"], "task.updated"),
+        (completed["revision"], "task.completed"),
+        (verified["revision"], "task.completed"),
+    ]
+    with pytest.raises(CoordinationError, match="TASK_NOT_ACCESSIBLE"):
+        env["store"].claim_task("source-client", request_id="sender-cannot-claim", task_id=task["task_id"])
+    for _, _, _, body in notices:
+        assert b"PRIVATE" not in body
+        assert claim["lease_token"].encode() not in body
+        assert SECRET.encode() not in body
+        assert b"source-client" not in body and b"worker-client" not in body
 
 
 def test_exact_renewal_and_key_rotation_preserve_verified_binding_but_url_change_does_not(env):
@@ -383,6 +430,37 @@ def test_retries_keep_event_id_and_bytes_across_process_restart(env):
     assert attempts[0][2]["webhook-timestamp"] != attempts[1][2]["webhook-timestamp"]
     receipt = [r for r in restarted.receipts("worker-client", subscription["id"]) if r["kind"] == "task"][0]
     assert receipt["attempts"] == 2 and receipt["status"] == "accepted"
+
+
+def test_preupgrade_notice_retries_keep_original_body_without_new_metadata(env):
+    subscription = subscribe(env)
+    verify(env, subscription)
+    asyncio.run(env["native"].run_once())
+    task = delegate(env)
+    env["native"]._sync()
+    with sqlite3.connect(env["store"].path) as db:
+        event_id, serialized = db.execute(
+            "SELECT event_id,body FROM coord_native_outbox WHERE kind='task'").fetchone()
+        legacy = json.loads(serialized)
+        legacy["data"].pop("revision")
+        legacy["data"].pop("recipient_role")
+        serialized = json.dumps(legacy, separators=(",", ":"))
+        db.execute("UPDATE coord_native_outbox SET body=? WHERE event_id=?", (serialized, event_id))
+    # The advertised schema still accepts the retained pre-upgrade envelope.
+    schema = EVENT_DEFINITION["payloadSchema"]
+    assert set(schema["required"]).issubset(legacy["data"])
+    assert set(legacy["data"]).issubset(schema["properties"])
+    env["post"].statuses = [503, 200]
+    restarted = NativeEvents(env["store"], allowlist_path=env["allowlist"], oauth_db_path=env["oauth"], post=env["post"])
+    asyncio.run(restarted.run_once())
+    env["clock"][0] += 3
+    asyncio.run(restarted.run_once())
+    attempts = [call for call in env["post"].events() if call[1]["data"]["task_id"] == task["task_id"]]
+    assert len(attempts) == 2
+    assert all(call[3] == serialized.encode() for call in attempts)
+    assert all(call[2]["webhook-id"] == event_id for call in attempts)
+    assert attempts[0][2]["webhook-timestamp"] != attempts[1][2]["webhook-timestamp"]
+    assert env["store"].task_status("source-client", task_id=task["task_id"])["status"] == "queued"
 
 
 def test_attempts_are_bounded_and_transport_failure_does_not_fail_assignment(env):

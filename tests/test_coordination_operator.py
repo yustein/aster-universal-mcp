@@ -107,7 +107,7 @@ def test_companion_registers_coordination_without_machine_execution(tmp_path, mo
     tool_names = {tool.name for tool in asyncio.run(server.list_tools())}
     assert "aster_delegate_task" in tool_names and "aster_claim_task" in tool_names
     assert not {"run_command", "start_job", "execute_command", "begin_upload"} & tool_names
-    assert len(tool_names) == 13
+    assert len(tool_names) == 14
     with caller("client"):
         status = invoke(server, "connection_status")
         assert status["admin_approved"] and not status["machine_execution"]

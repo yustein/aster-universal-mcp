@@ -135,6 +135,62 @@ expected fields. A sender can record actual checks through `aster_verify_result`
 using the current revision and evidence. `completed` means that the worker's
 terminal result was persisted; it is not independent proof of a business effect.
 
+## Recover sender outcomes and report completion
+
+`aster_inbox` lists queued assignments for the receiving agent. A sender uses
+`aster_outcomes(cursor=0, limit=20)` to recover its own tasks with saved outcomes:
+`completed`, `failed`, `blocked`, `uncertain`, `cancelled`, or `expired`. It includes
+the current result and evidence, including outcomes already accepted or rejected
+by the sender. Reading this inbox neither claims work nor acknowledges a user
+notification. It reports persisted state without advancing expiry. Use
+`aster_task_status(task_id=...)` for the current state of an individual task
+before taking action.
+
+The response contains `outcomes`, `next_cursor`, and `has_more`. Each outcome
+includes its `task_id`, `parent_task_id`, `task_revision`, sender-event `sequence`,
+status, result, evidence, and available verification records. Use `task_revision`
+as the expected revision when reviewing that saved result; reread status if a
+later operation reports a revision conflict. Pages are bounded by both entry
+count and response bytes.
+
+Follow `next_cursor` while `has_more` is true. These are pages of current saved
+outcomes ordered by sender-event sequence, not an audit log of every attempt or
+a frozen snapshot across requests. A state change or reconciliation between
+pages can change what is visible. Start a new recovery pass at `cursor=0`; a
+pagination cursor is not an acknowledgement that the user saw earlier results.
+This API adds no timer, polling worker, or fallback schedule.
+
+Each entry has a stable semantic `outcome_id`. Sender verification, a new native
+delivery epoch, and transport retries do not make the same saved outcome new.
+Changing the outcome or execution attempt does. Verification can cause an entry
+to appear again at a later event sequence with the same `outcome_id`. Deduplicate
+announcements against that identity and a recorded, actually observed host
+message or run reference. Do not infer publication from `acceptance=accepted`,
+an HTTP delivery receipt, or merely having read the result. Reconciliation can
+replace the current saved outcome; this endpoint does not preserve every past
+result as a separate historical record.
+
+The host handling a completed task must produce an explicit final message in the
+intended conversation after saving and reading back the result. State the task
+ID, actual outcome, useful findings or changes, tests actually performed,
+remaining limitations, and the next authorized step in its parent project. An
+implementation-and-review job should distinguish implementation evidence from
+the reviewer's findings and the sender's acceptance. A saved result with a host
+run recorded as `no_update` is not evidence of a visible completion message.
+
+Keep communication restrictions precise. For example: "Do not send email,
+messages through external services, or contact other people. Return the requested
+completion summary in this conversation." That external-recipient restriction
+does not suppress the requested reply to the user. Honor an explicit request for
+silent operation separately.
+
+The coordinator has no publication acknowledgement tool and does not assert that
+a person saw a message. Observe the actual host output before recording a
+publication reference. If the host is silent or interrupted, the saved outcome
+remains recoverable, but the inbox alone does not trigger another wake. Recover
+the result on the next authorized event or explicit recovery pass; do not rerun
+the completed implementation to obtain a notification.
+
 ## Fixed command executor contract
 
 Only the operator's configuration chooses the executable, arguments, environment
@@ -357,6 +413,44 @@ operator-observed binding, not cryptographic provider attestation. Readiness
 expires or is revoked with its binding. Replacing a receiver invalidates old
 ownership. Delivery can repeat; exclusive task claims prevent duplicate ownership.
 An HTTP delivery receipt still does not mean that execution began or completed.
+
+### Handle native notices according to the recipient's role
+
+New task notices include `revision`, the task revision when the event was saved,
+and `recipient_role`, either `receiver` or `sender`. Both are `null` on enrollment
+probes. Previously persisted webhook bodies may omit these additive fields; they
+remain byte-for-byte unchanged on retry. Read `aster_profile` and
+`aster_task_status` to resolve a legacy notice. The event is a hint to inspect
+state, not authority to claim or repeat work, and its revision may be older than
+the current task.
+
+| Notice | Host behavior |
+| --- | --- |
+| `receiver.probe` | Report the actual probe and observed destination for operator verification. Do not claim work or infer verified readiness. |
+| Receiver `task.queued` | Read the referenced task, confirm it is still queued and assigned to this agent, then claim that exact `task_id`. Preserve the returned lease/fence and operate only within its recorded scope. |
+| Sender outcome notice | Read the referenced task and use `aster_outcomes` when recovering saved outcomes. Review the result and announce the current outcome as described above. Never claim a completed sender task. |
+| Sender progress notice | Read current state. Distinguish useful progress or a blocker from completion; do not execute the receiver's task. |
+
+Preserve the existing event types: `task.completed` can describe a failed,
+cancelled, or expired task, and sender verification can emit another such event
+without a new semantic outcome. `task.updated` can describe a blocked or uncertain
+task. Branch on authoritative task status and identity, not the event name alone.
+
+Keep each run scoped to the referenced assignment and its explicitly authorized
+parent continuation. `parent_task_id` links work; it does not automatically resume
+the parent, grant new scope, or authorize draining unrelated assignments. Record
+the child outcome, any sender acceptance, and next step in the parent's existing
+project state.
+Use stable delegation request IDs if that step creates another assignment, and
+reuse an ID only for an identical payload. A duplicate or stale notice must not
+relaunch completed work or start the same continuation twice. If publication or
+continuation is ambiguous, inspect its saved evidence before proceeding.
+
+Configure the host's event instructions to return the requested visible final
+message for a new outcome, including a failure or blocker. It may omit a repeated
+announcement only when an observed publication reference for the same
+`outcome_id` supports that decision. Webhook HTTP acceptance, execution completion,
+sender verification, and visible host publication are separate observations.
 
 OpenAI native Events requires MCP revision `2026-07-28`; Claude Code's current
 channel documentation says that revision cannot carry its channel messages.

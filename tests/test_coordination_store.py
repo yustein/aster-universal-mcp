@@ -8,7 +8,7 @@ import threading
 
 import pytest
 
-from coordination.store import CoordinationError, Store
+from coordination.store import CoordinationError, MAX_OUTCOMES_BYTES, Store
 
 
 @pytest.fixture
@@ -233,6 +233,184 @@ def test_native_reconnect_recovers_queue_and_saved_result_notifications(state):
     receipt = store.pending_task_events("aster")
     assert len(receipt) == 1 and receipt[0]["event_type"] == "task.completed"
     assert receipt[0]["recipient"] == "aster"
+
+
+def test_outcomes_are_sender_scoped_and_never_expose_coordination_secrets(state):
+    store, _ = state
+    own = assignment(store)
+    own_claim = claim(store, own)
+    store.complete_task("claude-client", **credentials(own_claim), result={"summary": "sender's result"})
+    store.grant(sender="outsider", receiver="claude")
+    other = store.delegate_task("outsider-client", to_agent="claude", request_id="other-sender",
+                                instruction="Other work", expected_result="Other result")
+    other_claim = claim(store, other, request="other-claim")
+    store.complete_task("claude-client", **credentials(other_claim), result={"summary": "other private result"})
+    own_page = store.outcomes("aster-client")
+    assert [row["task_id"] for row in own_page["outcomes"]] == [own["task_id"]]
+    assert [row["task_id"] for row in store.outcomes("outsider-client")["outcomes"]] == [other["task_id"]]
+    # Being the receiver grants task-status access, not access to sender outcomes.
+    assert store.outcomes("claude-client") == {"outcomes": [], "next_cursor": 0, "has_more": False}
+    encoded = json.dumps(own_page)
+    assert own_claim["lease_token"] not in encoded and other_claim["lease_token"] not in encoded
+    assert "client_id" not in encoded and "aster-client" not in encoded and "other private result" not in encoded
+    with pytest.raises(CoordinationError, match="AGENT_NOT_ENROLLED"):
+        store.outcomes("unknown-client", cursor=2**63 - 1)
+    store.disable_agent("aster")
+    with pytest.raises(CoordinationError, match="AGENT_DISABLED"):
+        store.outcomes("aster-client", cursor=2**63 - 1)
+
+
+def test_outcomes_read_does_not_mutate_expiry_acceptance_or_require_native_readiness(state):
+    store, now = state
+    completed = assignment(store)
+    store.complete_task("claude-client", **credentials(claim(store, completed)), result={"count": 3})
+    assignment(store, request="overdue-queued", ttl_seconds=60)
+    running = assignment(store, request="overdue-running")
+    claim(store, running, request="short-lease", lease_seconds=15)
+    store.register_agent(agent_id="aster", client_id="aster-client", display_name="Aster", provider="openai",
+                         receive_mode="native", replace=True)
+    assert store.profile("aster-client")["receive_ready"] is False
+    now[0] += 61
+
+    def snapshot():
+        with sqlite3.connect(store.path) as db:
+            return (db.execute("SELECT task_id,status,document FROM coord_tasks ORDER BY task_id").fetchall(),
+                    db.execute("SELECT * FROM coord_events ORDER BY sequence").fetchall())
+
+    before = snapshot()
+    page = store.outcomes("aster-client")
+    assert [row["task_id"] for row in page["outcomes"]] == [completed["task_id"]]
+    assert page["outcomes"][0]["acceptance"] == "pending"
+    assert page["outcomes"][0]["result_verification"] == "worker_reported"
+    assert snapshot() == before  # No implicit expiry, read acknowledgement, or verification.
+
+
+def test_outcomes_include_all_persisted_result_and_attention_states(state):
+    store, now = state
+    for status in ("completed", "failed", "blocked", "uncertain"):
+        task = assignment(store, request="status-" + status)
+        owned = claim(store, task, request="claim-" + status)
+        store.complete_task("claude-client", **credentials(owned), outcome=status, result={"fixture_status": status})
+    cancelled = assignment(store, request="status-cancelled")
+    store.cancel_task("aster-client", task_id=cancelled["task_id"], reason="No longer needed")
+    expired = assignment(store, request="status-expired", ttl_seconds=60)
+    now[0] += 60
+    assert store.task_status("aster-client", task_id=expired["task_id"])["status"] == "expired"
+    rows = store.outcomes("aster-client")["outcomes"]
+    assert [row["status"] for row in rows] == ["completed", "failed", "blocked", "uncertain", "cancelled", "expired"]
+
+
+def test_outcomes_resume_after_restart_and_include_already_accepted_results(state):
+    store, now = state
+    task_ids = []
+    for index in range(5):
+        task = assignment(store, request=f"outcome-{index}", parent_task_id=task_ids[0] if task_ids else None)
+        done = store.complete_task("claude-client", **credentials(claim(store, task, request=f"outcome-claim-{index}")),
+                                   result={"index": index}, evidence={"fixture": True})
+        if index == 1:
+            store.verify_result("aster-client", task_id=task["task_id"], expected_revision=done["revision"],
+                                accepted=True, evidence={"checks": ["known index"], "reference": "test:accepted"})
+        task_ids.append(task["task_id"])
+    cursor, recovered = 0, []
+    for count, more in ((2, True), (2, True), (1, False)):
+        reopened = Store(store.path, clock=lambda: now[0])
+        page = reopened.outcomes("aster-client", cursor=cursor, limit=2)
+        assert len(page["outcomes"]) == count and page["has_more"] is more
+        assert all(row["sequence"] > cursor for row in page["outcomes"])
+        assert page["next_cursor"] == page["outcomes"][-1]["sequence"]
+        recovered.extend(page["outcomes"])
+        cursor = page["next_cursor"]
+    assert [row["task_id"] for row in recovered] == task_ids
+    assert recovered[1]["acceptance"] == "accepted" and recovered[1]["result_verification"] == "sender_verified"
+    assert recovered[1]["verification_evidence"]["reference"] == "test:accepted"
+    assert recovered[0]["parent_task_id"] is None and recovered[2]["parent_task_id"] == task_ids[0]
+    assert reopened.outcomes("aster-client", cursor=cursor) == {"outcomes": [], "next_cursor": cursor, "has_more": False}
+
+
+def test_outcome_identity_survives_verification_but_new_sequence_is_recoverable(state):
+    store, _ = state
+    task = assignment(store)
+    done = store.complete_task("claude-client", **credentials(claim(store, task)), result={"ok": True}, evidence={"count": 1})
+    first = store.outcomes("aster-client")["outcomes"][0]
+    verified = store.verify_result("aster-client", task_id=task["task_id"], expected_revision=done["revision"],
+                                   accepted=True, evidence={"checks": ["known fixture"], "reference": "test:verified"})
+    later = store.outcomes("aster-client", cursor=first["sequence"])["outcomes"][0]
+    assert later["outcome_id"] == first["outcome_id"]
+    assert later["task_revision"] == verified["revision"] > first["task_revision"]
+    assert later["sequence"] > first["sequence"] and later["acceptance"] == "accepted"
+    assert len(store.outcomes("aster-client")["outcomes"]) == 1  # Current outcomes, not all historical events.
+    normalized = dict(done, status_reason=None, reconciliation_evidence=None)
+    assert Store._outcome_view(normalized, 999)["outcome_id"] == first["outcome_id"]
+
+
+@pytest.mark.parametrize("change", [
+    {"task_id": "another-task"}, {"fence": 2}, {"status": "failed"},
+    {"result": {"ok": 1}}, {"result": {"ok": 1.0}}, {"evidence": {"count": True}},
+    {"status_reason": "Changed reason"}, {"reconciliation_evidence": {"reference": "operator:review"}},
+])
+def test_outcome_identity_changes_for_semantic_content_and_exact_json_types(state, change):
+    store, _ = state
+    done = store.complete_task("claude-client", **credentials(claim(store, assignment(store))),
+                               result={"ok": True}, evidence={"count": 1})
+    first = store.outcomes("aster-client")["outcomes"][0]
+    assert Store._outcome_view({**done, **change}, first["sequence"])["outcome_id"] != first["outcome_id"]
+
+
+def test_outcomes_follow_reconciliation_and_new_attempt_without_listing_obsolete_state(state):
+    store, _ = state
+    task = assignment(store)
+    first = store.complete_task("claude-client", **credentials(claim(store, task)), outcome="uncertain", result={"observed": None})
+    old_id = store.outcomes("aster-client")["outcomes"][0]["outcome_id"]
+    store.reconcile_task("aster-client", task_id=task["task_id"], expected_revision=first["revision"],
+                         decision="retry", evidence={"effects_absent": True, "reference": "test:fixture-had-no-effects"})
+    assert store.outcomes("aster-client")["outcomes"] == []
+    second = claim(store, task, request="explicit-second-attempt")
+    store.complete_task("claude-client", **credentials(second), outcome="blocked", result={"observed": None})
+    outcome = store.outcomes("aster-client")["outcomes"][0]
+    assert outcome["fence"] == 2 and outcome["status"] == "blocked" and outcome["outcome_id"] != old_id
+    assert outcome["reconciliation_evidence"]["reference"] == "test:fixture-had-no-effects"
+
+
+def test_outcomes_byte_budget_keeps_full_maximal_row_and_never_skips_page_tail(state):
+    store, _ = state
+    def sized_payload(size, **content):
+        payload = {**content, "padding": ""}
+        overhead = len(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode())
+        payload["padding"] = "x" * (size - overhead)
+        return payload
+
+    first = assignment(store)
+    result, evidence = sized_payload(262144), sized_payload(65536)
+    store.complete_task("claude-client", **credentials(claim(store, first)), outcome="uncertain", result=result, evidence=evidence)
+    stopped = store.cancel_task("aster-client", task_id=first["task_id"], reason="\x01" * 4096)
+    resolved = store.reconcile_task("aster-client", task_id=first["task_id"], expected_revision=stopped["revision"],
+                                    decision="complete", evidence=sized_payload(65536))
+    store.verify_result("aster-client", task_id=first["task_id"], expected_revision=resolved["revision"], accepted=True,
+                        evidence=sized_payload(65536, checks=["fixture bounds"], reference="test:maximal-outcome"))
+    task_ids = [first["task_id"]]
+    for index, size in enumerate((200000, 100)):
+        task = assignment(store, request=f"byte-tail-{index}")
+        store.complete_task("claude-client", **credentials(claim(store, task, request=f"byte-tail-claim-{index}")),
+                            result=sized_payload(size))
+        task_ids.append(task["task_id"])
+    first_page = store.outcomes("aster-client", limit=100)
+    assert first_page["has_more"] is True and len(first_page["outcomes"]) == 1
+    assert first_page["outcomes"][0]["result"] == result and first_page["outcomes"][0]["evidence"] == evidence
+    assert first_page["outcomes"][0]["status_reason"] == "\x01" * 4096
+    second_page = store.outcomes("aster-client", cursor=first_page["next_cursor"], limit=100)
+    assert second_page["has_more"] is False and len(second_page["outcomes"]) == 2
+    assert [row["task_id"] for page in (first_page, second_page) for row in page["outcomes"]] == task_ids
+    for page in (first_page, second_page):
+        assert len(json.dumps(page, sort_keys=True, separators=(",", ":")).encode()) <= MAX_OUTCOMES_BYTES
+        assert page["next_cursor"] == page["outcomes"][-1]["sequence"]
+
+
+@pytest.mark.parametrize("arguments", [{"cursor": -1}, {"cursor": True}, {"cursor": 1.0},
+                                      {"limit": 0}, {"limit": 101}, {"limit": False}])
+def test_outcomes_reject_invalid_pagination(state, arguments):
+    store, _ = state
+    with pytest.raises(CoordinationError, match="INVALID_INPUT"):
+        store.outcomes("aster-client", **arguments)
 
 
 def test_disconnected_result_backlog_can_be_drained_in_bounded_durable_pages(state):

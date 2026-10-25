@@ -23,6 +23,8 @@ from typing import Callable
 
 from . import CONTRACT_VERSION
 
+MAX_OUTCOMES_BYTES = 512 * 1024
+
 
 class CoordinationError(ValueError):
     """Expected, safe-to-display contract failure; never includes secret values."""
@@ -616,6 +618,61 @@ class Store:
         with closing(self._connect()) as db:
             _, task = self._visible(db, client_id, task_id)
             return self._view(task)
+
+    @staticmethod
+    def _outcome_view(task, sequence):
+        # Verification and transport progress do not create a new semantic
+        # outcome. Explicit null and a missing optional field have one identity.
+        identity = {"contract": "aster.outcome.v1", **{key: task.get(key) for key in (
+            "task_id", "fence", "status", "result", "evidence", "status_reason", "reconciliation_evidence")}}
+        view = {key: task[key] for key in (
+            "task_id", "parent_task_id", "status", "fence", "result", "evidence", "status_reason",
+            "result_verification", "acceptance", "verification_evidence", "reconciliation_evidence") if key in task}
+        view.update(outcome_id="outcome_" + _hash(identity), sequence=sequence, task_revision=task["revision"])
+        return view
+
+    def outcomes(self, client_id, *, cursor=0, limit=20):
+        """Page this active sender's persisted current outcomes, not an audit log.
+
+        This is a read only operation: it neither advances expiry, verifies a
+        result, nor acknowledges publication. Later verification can make a task
+        reappear at a newer sequence with the same semantic outcome ID.
+        """
+        _integer(cursor, "cursor", 0, 2**63 - 1)
+        _integer(limit, "limit", 1, 100)
+        page = {"outcomes": [], "next_cursor": cursor, "has_more": False}
+        encoded_items = 0
+        with closing(self._connect()) as db:
+            # One read snapshot binds active sender identity, event sequence and
+            # current task document without taking a write/maintenance lock.
+            db.execute("BEGIN")
+            agent = self._agent(db, client_id=client_id)
+            rows = db.execute("""SELECT e.sequence,t.document FROM coord_events e
+                JOIN coord_tasks t ON t.task_id=e.task_id
+                WHERE e.recipient=? AND t.sender=? AND e.sequence>?
+                AND t.status IN ('completed','failed','blocked','uncertain','cancelled','expired')
+                AND e.sequence=(SELECT max(n.sequence) FROM coord_events n
+                    WHERE n.task_id=e.task_id AND n.recipient=e.recipient)
+                ORDER BY e.sequence LIMIT ?""", (agent["agent_id"], agent["agent_id"], cursor, limit + 1))
+            for row in rows:
+                if len(page["outcomes"]) == limit:
+                    page["has_more"] = True
+                    break
+                item = self._outcome_view(json.loads(row["document"]), row["sequence"])
+                item_bytes = len(_dump(item).encode("utf-8"))
+                # Reserve the entire canonical JSON envelope, including commas
+                # and the longer false spelling, not just each result's bytes.
+                envelope_bytes = len(_dump({"outcomes": [], "next_cursor": row["sequence"],
+                                            "has_more": False}).encode("utf-8"))
+                if envelope_bytes + encoded_items + item_bytes + len(page["outcomes"]) > MAX_OUTCOMES_BYTES:
+                    if not page["outcomes"]:
+                        _error("OUTCOME_TOO_LARGE", "Saved outcome exceeds the response budget; read its task status directly.")
+                    page["has_more"] = True
+                    break  # Never advance the cursor past an omitted row.
+                page["outcomes"].append(item)
+                encoded_items += item_bytes
+                page["next_cursor"] = row["sequence"]
+        return page
 
     def verify_result(self, client_id, *, task_id, expected_revision, accepted, evidence):
         """Sender records its independent review; delivery and worker ACK cannot do so."""
