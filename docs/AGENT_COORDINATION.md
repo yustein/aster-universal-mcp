@@ -216,9 +216,19 @@ it does not regenerate output. An acknowledgement without the matching terminal
 task remains `receipt_pending`. Fenced receipts retain their output for operator
 review with disposition `reconciliation_required`, never `acknowledged`.
 
-Preserve the journal after an error. A claim whose reply was lost and whose lease
-has since expired needs operator review; do not delete state to force execution.
-The sender reconciles uncertain work using actual evidence. Retrying requires
+An attempt still durably in `claiming` has not launched its executor. If the
+coordinator definitively rejects that saved claim with `CLAIM_NO_LONGER_CURRENT`,
+the worker archives the claim request and retires its active journal with state
+`claim_retired`. The archive preserves the request ID, coordinator and rejection
+reason without a lease secret. `--once` reports this state and exits with code 2;
+a later invocation can claim other work. `--watch` reports it and continues
+polling. Neither mode reconciles or requeues the original task: an expired task
+remains uncertain until the sender reviews it.
+
+Preserve the journal after ambiguous transport errors, other coordinator
+rejections or invalid responses; those do not establish that a claim can be
+retired. Do not delete state to force execution. The sender reconciles uncertain
+work using actual evidence. Retrying requires
 `effects_absent=true` after checking for prior effects. Output and stderr in local
 receipts may contain sensitive task data, so protect and retain them according to
 your data policy. Archived receipts omit the lease secret; an active receipt needs

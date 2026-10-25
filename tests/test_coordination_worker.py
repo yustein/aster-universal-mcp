@@ -1,5 +1,6 @@
 """No billed calls: real subprocesses, durable Store and an in-memory MCP transport."""
 import asyncio
+from contextlib import asynccontextmanager
 from dataclasses import replace
 import json
 import os
@@ -9,10 +10,12 @@ import time
 from types import SimpleNamespace
 
 import pytest
+from mcp.types import CallToolResult, TextContent
 
-from coordination.store import Store
+from coordination import worker as worker_module
+from coordination.store import CoordinationError, Store
 from coordination.worker import (
-    Journal, MAX_JOURNAL_BYTES, MCPCoordinator, Worker, WorkerConfig, WorkerError,
+    CoordinatorRejection, Journal, MAX_JOURNAL_BYTES, MCPCoordinator, Worker, WorkerConfig, WorkerError,
     connect_coordinator, execute_command, parse_completion,
 )
 
@@ -79,6 +82,25 @@ class LocalCoordinator:
         if name == "aster_complete_task" and self.lose_completion_response:
             raise WorkerError("response lost after commit")
         return value
+
+
+class StoreToolSession:
+    """Exercise MCPCoordinator's actual parsing, with no socket or live server."""
+
+    def __init__(self, coordinator, *, lose_claim_response=False):
+        self.coordinator = coordinator
+        self.lose_claim_response = lose_claim_response
+
+    async def call_tool(self, name, arguments, **kwargs):
+        try:
+            value = await self.coordinator.call(name, arguments)
+        except CoordinationError as error:
+            return CallToolResult(is_error=True, content=[TextContent(
+                type="text", text=f"Error executing tool {name}: {error}")])
+        if name == "aster_claim_task" and self.lose_claim_response:
+            self.lose_claim_response = False
+            raise TimeoutError("response lost after claim commit")
+        return CallToolResult(content=[], structured_content=value)
 
 
 def once(config, coordinator, env=None):
@@ -325,6 +347,188 @@ def test_claim_request_is_reused_after_lost_response(tmp_path):
     assert len(seen) == 2 and seen[0] == seen[1]
 
 
+@pytest.mark.parametrize("boundary", ["lost_response", "before_running_marker"])
+@pytest.mark.parametrize("mode", ["once", "watch"])
+def test_expired_unacknowledged_claim_retires_without_retrying_old_task(tmp_path, monkeypatch, boundary, mode):
+    counter = tmp_path / "executed.txt"
+    code = ("import json,sys,pathlib; t=json.load(sys.stdin)['task']; "
+            f"p=pathlib.Path({str(counter)!r}); "
+            "p.write_text((p.read_text() if p.exists() else '')+t['task_id']+'\\n'); "
+            "print(json.dumps({'task_id':t['task_id'],'status':'completed','exit_code':0,'result':{'ok':True}}))")
+    config = replace(configuration(tmp_path, code), poll_interval_seconds=.01)
+    store = coordinator_store(tmp_path)
+    clock = [time.time()]
+    store.clock = lambda: clock[0]
+    first = delegate(store, "first")
+    local = LocalCoordinator(store)
+    remote = MCPCoordinator(StoreToolSession(local, lose_claim_response=boundary == "lost_response"), .1)
+
+    if boundary == "lost_response":
+        with pytest.raises(WorkerError, match="coordinator call failed"):
+            once(config, remote)
+    else:
+        class Crash(BaseException):
+            pass
+
+        save = Journal.save
+
+        def crash_before_running_marker(self, record, path=None):
+            if record.get("phase") == "running":
+                raise Crash()
+            save(self, record, path)
+
+        with monkeypatch.context() as crash_patch:
+            crash_patch.setattr(Journal, "save", crash_before_running_marker)
+            with pytest.raises(Crash):
+                once(config, remote)
+
+    active = config.state_dir / "active.json"
+    original = json.loads(active.read_text())
+    assert original["phase"] == "claiming"
+    assert "task_id" not in original and "fence" not in original
+    assert not counter.exists()
+    clock[0] += config.lease_seconds + 1
+    second = delegate(store, "second")
+    uncertain = store.task_status("sender-client", task_id=first["task_id"])
+    assert uncertain["status"] == "uncertain" and uncertain["fence"] == 1
+
+    @asynccontextmanager
+    async def local_connect(config, environ):
+        yield remote
+
+    summaries = []
+    completion_signal = [None]
+
+    def capture_summary(value, **kwargs):
+        summary = json.loads(value)
+        summaries.append(summary)
+        if summary["state"] == "completed" and completion_signal[0] is not None:
+            completion_signal[0].set()
+
+    monkeypatch.setattr(worker_module, "connect_coordinator", local_connect)
+    monkeypatch.setattr(worker_module, "print", capture_summary, raising=False)
+    if mode == "once":
+        assert asyncio.run(worker_module.run(config, watch=False)) == 2
+        assert len(summaries) == 1 and summaries[0]["state"] == "claim_retired"
+        assert not counter.exists()
+        assert store.task_status("sender-client", task_id=second["task_id"])["status"] == "queued"
+        assert asyncio.run(worker_module.run(config, watch=False)) == 0
+    else:
+        async def watch_until_completed():
+            completion_signal[0] = asyncio.Event()
+            runner = asyncio.create_task(worker_module.run(config, watch=True))
+            try:
+                await asyncio.wait_for(completion_signal[0].wait(), 5)
+            finally:
+                runner.cancel()
+                await asyncio.gather(runner, return_exceptions=True)
+
+        asyncio.run(watch_until_completed())
+
+    retired = summaries[0]
+    assert retired["state"] == "claim_retired"
+    assert retired["request_id"] == original["request_id"]
+    assert retired["reason"] == "CLAIM_NO_LONGER_CURRENT"
+    archived = json.loads(Path(retired["receipt"]).read_text())
+    assert archived["disposition"] == "claim_retired"
+    assert archived["coordinator_url"] == config.coordinator_url
+    assert archived["request_id"] == original["request_id"]
+    assert archived["reason"] == "CLAIM_NO_LONGER_CURRENT"
+    assert "lease_token" not in archived and "task_id" not in archived and "fence" not in archived
+    assert not active.exists()
+    assert counter.read_text().splitlines() == [second["task_id"]]
+    assert store.task_status("sender-client", task_id=first["task_id"]) == uncertain
+    assert store.task_status("sender-client", task_id=second["task_id"])["status"] == "completed"
+    assert once(config, remote)["state"] == "idle"
+    claims = [args["request_id"] for name, args in local.calls if name == "aster_claim_task"]
+    assert claims[0] == claims[1] == original["request_id"]
+    assert claims[2] != original["request_id"]
+    completed = [args["task_id"] for name, args in local.calls if name == "aster_complete_task"]
+    assert completed == [second["task_id"]]
+    assert not any(name in {"aster_reconcile_task", "aster_cancel_task"} for name, _ in local.calls)
+
+
+@pytest.mark.parametrize("response", [
+    "unknown", "lookalike_code", "embedded_code", "multiple_blocks", "pending", "invalid", "transport",
+])
+def test_ambiguous_claim_error_keeps_original_journal(tmp_path, response):
+    config = configuration(tmp_path)
+    record = {"version": 1, "phase": "claiming", "request_id": "retained-claim",
+              "coordinator_url": config.coordinator_url, "created_at": time.time()}
+    with Journal(config.state_dir) as journal:
+        journal.save(record)
+    active = config.state_dir / "active.json"
+    original = active.read_bytes()
+    seen = []
+
+    async def call_tool(name, arguments, **kwargs):
+        seen.append(arguments["request_id"])
+        text = "Error executing tool aster_claim_task: CLAIM_NO_LONGER_CURRENT: fixture detail"
+        if response == "transport":
+            raise TimeoutError(text)
+        if response == "invalid":
+            return CallToolResult(content=[], structured_content={"unexpected": True})
+        if response == "pending":
+            return SimpleNamespace(is_error=True, result_type="input_required", structured_content=None,
+                                   content=[TextContent(type="text", text=text)])
+        if response == "unknown":
+            text = "Error executing tool aster_claim_task: UNAVAILABLE: fixture detail"
+        elif response == "lookalike_code":
+            text = text.replace("CLAIM_NO_LONGER_CURRENT:", "CLAIM_NO_LONGER_CURRENT_EXTRA:")
+        elif response == "embedded_code":
+            text = text.replace("aster_claim_task: ", "aster_claim_task: UNKNOWN: ")
+        content = [TextContent(type="text", text=text)]
+        if response == "multiple_blocks":
+            content.append(TextContent(type="text", text="Contradictory extra content"))
+        return CallToolResult(is_error=True, content=content)
+
+    remote = MCPCoordinator(SimpleNamespace(call_tool=call_tool), .1)
+    for _ in range(2):
+        with pytest.raises(WorkerError) as error:
+            once(config, remote)
+        assert not isinstance(error.value, CoordinatorRejection)
+        assert active.read_bytes() == original
+        assert [path.name for path in config.state_dir.glob("*.json")] == ["active.json"]
+    assert seen == [record["request_id"], record["request_id"]]
+
+
+def test_claim_retirement_is_durable_guarded_and_drops_credentials(tmp_path, monkeypatch):
+    record = {"version": 1, "phase": "claiming", "request_id": "claim-evidence",
+              "coordinator_url": "https://coordinator.example.test/mcp", "created_at": time.time(),
+              "lease_token": "private-lease", "_lease_token": "private-internal-lease",
+              "extra": {"token": "private-extra"}}
+    reason = "CLAIM_NO_LONGER_CURRENT"
+    with Journal(tmp_path / "state") as journal:
+        journal.save(record)
+        original = journal.active_path.read_bytes()
+        save = journal.save
+
+        def fail_archive(record, path=None):
+            assert path is not None
+            raise OSError("injected archive write failure")
+
+        with monkeypatch.context() as fault:
+            fault.setattr(journal, "save", fail_archive)
+            with pytest.raises(OSError, match="archive write failure"):
+                journal.retire_claim(record, reason)
+        assert journal.active_path.read_bytes() == original
+        save({**record, "phase": "running"})
+        running = journal.active_path.read_bytes()
+        with pytest.raises(WorkerError, match="not retireable"):
+            journal.retire_claim(record, reason)
+        assert journal.active_path.read_bytes() == running
+        save(record)
+        archive_path = journal.retire_claim(record, reason)
+        archive = json.loads(archive_path.read_text())
+        assert not journal.active_path.exists()
+        assert archive == {key: record[key] for key in (
+            "version", "phase", "request_id", "coordinator_url", "created_at")} | {
+            "disposition": "claim_retired", "reason": reason, "archived_at": archive["archived_at"]}
+        assert "private-" not in archive_path.read_text()
+        if os.name != "nt":
+            assert archive_path.stat().st_mode & 0o777 == 0o600
+
+
 def test_state_lock_prevents_concurrent_use(tmp_path):
     state = tmp_path / "private-state"
     with Journal(state):
@@ -442,16 +646,23 @@ def test_slow_durable_running_marker_cannot_launch_after_lease_expiry(tmp_path, 
 def test_sdk_http_authentication_and_actual_tool_roundtrip(tmp_path):
     import httpx2
     from mcp.server.mcpserver import MCPServer
+    from mcp.server.mcpserver.exceptions import ToolError
     from mcp.server.transport_security import TransportSecuritySettings
 
     config = replace(configuration(tmp_path), request_timeout_seconds=5)
     store = coordinator_store(tmp_path)
     task = delegate(store)
     server = MCPServer("offline-worker-test")
+    claims = []
 
     @server.tool()
     def aster_claim_task(request_id: str, lease_seconds: int = 300) -> dict:
-        return store.claim_task("worker-client", request_id=request_id, lease_seconds=lease_seconds)
+        claims.append({"request_id": request_id, "lease_seconds": lease_seconds})
+        try:
+            return store.claim_task("worker-client", request_id=request_id, lease_seconds=lease_seconds)
+        except CoordinationError as error:
+            # Match coordination.tools' deliberate public error path exactly.
+            raise ToolError(str(error)) from None
 
     @server.tool()
     def aster_complete_task(task_id: str, lease_token: str, fence: int, result: dict,
@@ -486,6 +697,10 @@ def test_sdk_http_authentication_and_actual_tool_roundtrip(tmp_path):
                 with Journal(config.state_dir) as journal:
                     result = await Worker(config, remote, journal, {}).run_once()
                     assert result["state"] == "completed"
+                with pytest.raises(CoordinatorRejection) as rejected:
+                    await remote.call("aster_claim_task", claims[0])
+                assert rejected.value.code == "CLAIM_NO_LONGER_CURRENT"
+                assert str(rejected.value) == "coordinator rejected the tool call (CLAIM_NO_LONGER_CURRENT)"
 
     asyncio.run(asyncio.wait_for(exercise(), 15))
     assert seen.count("POST") >= 3

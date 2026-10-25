@@ -33,6 +33,15 @@ class WorkerError(Exception):
     """A safe diagnostic; do not include tokens, task text or provider stderr."""
 
 
+class CoordinatorRejection(WorkerError):
+    """A recognized coordinator error code, never its arbitrary response text."""
+
+    def __init__(self, code: str):
+        self.code = code if code == "CLAIM_NO_LONGER_CURRENT" else None
+        suffix = f" ({self.code})" if self.code else ""
+        super().__init__("coordinator rejected the tool call" + suffix)
+
+
 def _json(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False,
                       separators=(",", ":"), sort_keys=True).encode("utf-8")
@@ -269,6 +278,25 @@ class Journal:
         self.clear()
         return path
 
+    def retire_claim(self, record: dict[str, Any], reason: str) -> Path:
+        """Retire only this durable pre-execution attempt; remote effects are unknown."""
+        durable = self.load()
+        if (reason != "CLAIM_NO_LONGER_CURRENT" or record.get("phase") != "claiming"
+                or not isinstance(record.get("request_id"), str) or not record["request_id"]
+                or not isinstance(record.get("coordinator_url"), str) or not record["coordinator_url"]
+                or durable is None or _json(durable) != _json(record)):
+            raise WorkerError("claim journal changed or is not retireable; preserve it for review")
+        # A lost reply may leave no task ID or fence. Copy only recovery evidence,
+        # never lease tokens or other accidental credentials from an old record.
+        archive = {key: record[key] for key in (
+            "version", "phase", "request_id", "coordinator_url", "created_at") if key in record}
+        archive.update(disposition="claim_retired", reason=reason, archived_at=time.time())
+        identity = _json({"coordinator_url": record["coordinator_url"], "request_id": record["request_id"]})
+        path = self.directory / ("claim-" + hashlib.sha256(identity).hexdigest() + ".json")
+        self.save(archive, path)  # Preserve the evidence before releasing active state.
+        self.clear()
+        return path
+
 
 class Coordinator(Protocol):
     async def call(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]: ...
@@ -282,6 +310,19 @@ class MCPCoordinator:
         try:
             result = await self.session.call_tool(name, arguments, read_timeout_seconds=self.timeout)
             if getattr(result, "is_error", True) or getattr(result, "result_type", "complete") != "complete":
+                # Only a definitive tool error for this call may retire a claim.
+                # SDK 2.3 wraps deliberate ToolError messages with this prefix.
+                content = getattr(result, "content", None)
+                if (name == "aster_claim_task" and getattr(result, "is_error", None) is True
+                        and getattr(result, "result_type", None) == "complete"
+                        and getattr(result, "structured_content", None) is None
+                        and isinstance(content, list) and len(content) == 1
+                        and getattr(content[0], "type", None) == "text"):
+                    message = getattr(content[0], "text", None)
+                    if isinstance(message, str) and len(message) <= 4096:
+                        message = message.removeprefix("Error executing tool aster_claim_task: ")
+                        if re.fullmatch(r"CLAIM_NO_LONGER_CURRENT: [^\r\n]+", message):
+                            raise CoordinatorRejection("CLAIM_NO_LONGER_CURRENT")
                 raise WorkerError("coordinator rejected the tool call")
             value = result.structured_content
             if value is None:
@@ -641,8 +682,17 @@ class Worker:
         if record["phase"] != "claiming":
             raise WorkerError("unknown journal phase; operator reconciliation required")
         self.config.preflight(self.environ)
-        claim = await self.coordinator.call("aster_claim_task", {
-            "request_id": record["request_id"], "lease_seconds": self.config.lease_seconds})
+        try:
+            claim = await self.coordinator.call("aster_claim_task", {
+                "request_id": record["request_id"], "lease_seconds": self.config.lease_seconds})
+        except CoordinatorRejection as error:
+            if error.code != "CLAIM_NO_LONGER_CURRENT":
+                raise
+            path = self.journal.retire_claim(record, error.code)
+            # Do not reconcile/requeue the old task or infer that effects are
+            # absent. Only a later claim may pick other eligible queued work.
+            return {"state": "claim_retired", "request_id": record["request_id"],
+                    "reason": error.code, "receipt": str(path)}
         if "task" not in claim:
             raise WorkerError("coordinator omitted the task from its claim response")
         task = claim.get("task")
@@ -673,7 +723,10 @@ async def run(config: WorkerConfig, *, watch: bool = False) -> int:
                 summary = await worker.run_once()
                 print(json.dumps(summary, sort_keys=True), flush=True)
                 state = summary["state"]
-                if state not in {"completed", "idle"}:
+                if state == "claim_retired":
+                    if not watch:
+                        return 2  # Explicit recovery result; no new task in --once.
+                elif state not in {"completed", "idle"}:
                     return 2
                 if not watch:
                     return 0
@@ -684,8 +737,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", required=True, help="operator-owned worker JSON configuration")
     modes = parser.add_mutually_exclusive_group()
-    modes.add_argument("--once", action="store_true", help="process at most one task (default)")
-    modes.add_argument("--watch", action="store_true", help="explicitly poll for tasks until stopped or attention is needed")
+    modes.add_argument("--once", action="store_true", help="one task/recovery step (default); a retired claim exits 2 without executing new work")
+    modes.add_argument("--watch", action="store_true", help="explicitly poll for tasks; continue after claim retirement, stop for other recovery states")
     args = parser.parse_args(argv)
     try:
         return asyncio.run(run(WorkerConfig.load(args.config), watch=args.watch))
