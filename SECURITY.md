@@ -76,6 +76,58 @@ Linux transfers use 16 KiB chunks with sequential offsets, exact size/hash valid
 
 ## Beta limits and vulnerability reports
 
+### Optional coordination development feature
+
+The `0.2.0a1` source adds an opt-in coordination companion and optional tools in
+the existing gateways. The companion exposes no machine executor. When enabled
+inside a machine gateway, approved participants still have that gateway's
+administrative authority. Agent route grants, task scope records and lease tokens
+are coordination controls, not a sandbox against a malicious approved host
+administrator. Use distinct OAuth clients per logical agent; a shared client is
+one identity even when used by multiple chats.
+
+Enrollment, delegation routes and native destination verification are local
+operator operations. A valid callback challenge proves endpoint control. The
+exact native session is a separate operator-observed binding, recorded with an
+evidence reference; the coordinator cannot independently obtain a provider's
+private conversation identity. Task notices remain blocked until that binding is
+verified and fresh. Changed callback URLs or expected sessions, replaced agents
+and expired bindings fence prior claims. Routine signing-key rotation at the same
+destination requires a fresh challenge and preserves a valid binding; deliveries
+include both signatures for at most 300 seconds. Callback HTTP success does not
+complete a task.
+
+Coordination uses a separate protected SQLite database, with atomic task/outbox
+event writes, request hashes, exclusive claims and fencing generations. Expired
+running work becomes uncertain; it is not automatically requeued. A sender must
+check prior effects before explicitly retrying. Tokens or fences protect task
+state updates; they cannot undo a command, payment, message or remote request.
+Normal completion remains worker-reported until the sender records its checks.
+
+The database, WAL/SHM files and active worker journals contain sensitive task data,
+lease material and callback signing keys. They use filesystem access protection,
+not encryption at rest or operator-blind encryption. Protect the parent directory
+and backups with a private POSIX mode or Windows ACL, and keep state outside the
+source checkout and released artifacts. Retained tasks, events, receipts and
+deduplication records have no automatic retention deletion; operators must plan
+storage and backups. Per-payload/queue limits do not establish a global disk quota.
+
+Native callbacks use public HTTPS only, validate every resolved address, pin the
+connection to the checked address, verify TLS for the original hostname, reject
+redirects, and bound response size and elapsed time. The live administrative grant
+and registered client's revocation state are rechecked before delivery. Revoking
+one access token alone is not credential-family or subscription revocation; remove
+the administrative grant, disable the agent or unsubscribe to stop future native
+delivery. An already in-flight callback cannot be recalled.
+
+The supervised worker accepts a fixed operator-selected executable/argv, bounds
+runtime/output and keeps coordinator credentials and leases out of the child
+input/environment. It runs with its local account's permissions. Its POSIX process
+group cleanup and Windows direct-child cleanup do not substitute for the released
+machine executor's native containment. Model/API credentials are provisioned
+separately. Live provider wake, account pairing, native Windows worker behavior and
+long-running operation remain separate acceptance gates for this development feature.
+
 Manual startup, explicit client approval and owner-managed networking are the technical-beta operating model. Persistent service/autostart/reboot behavior, broad host/client compatibility, sustained load and long-duration reliability require separate qualification. Linux acceptance does not follow from a Linux-hosted shared test suite or the Windows release. Native macOS is not qualified here.
 
 The beta does not claim an independent security audit, a signed binary installer, a filesystem sandbox, general resource isolation or freedom from all race conditions. Focused native lifecycle and state-write tests establish only their documented cases.

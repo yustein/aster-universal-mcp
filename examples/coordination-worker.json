@@ -1,0 +1,23 @@
+{
+  "coordinator_url": "https://coordinator.example.com/mcp",
+  "token_env": "ASTER_COORDINATION_TOKEN",
+  "state_dir": "/var/lib/aster-coordination/echo-worker-state",
+  "workspace": "/var/lib/aster-coordination/workspaces",
+  "lease_seconds": 300,
+  "renew_interval_seconds": 60,
+  "request_timeout_seconds": 20,
+  "poll_interval_seconds": 5,
+  "command": {
+    "argv": [
+      "/opt/aster/.venv/bin/python",
+      "/opt/aster/examples/coordination-echo.py"
+    ],
+    "output_format": "json_receipt",
+    "env_passthrough": ["PATH", "SystemRoot", "WINDIR", "TEMP", "TMP", "LANG"],
+    "required_env": [],
+    "workspace_mode": "isolated",
+    "timeout_seconds": 240,
+    "max_input_bytes": 131072,
+    "max_output_bytes": 65536
+  }
+}
