@@ -2,6 +2,14 @@
 
 **Self-hosted remote MCP with Claude: separate Windows and Linux technical betas**
 
+**Development source: agent coordination (`0.2.0a1`).** An opt-in companion now
+provides provider-neutral assignments, exclusive renewable leases, checkpoints,
+durable results and separate sender verification. ChatGPT, Claude and supervised
+command workers share the same contract. Native MCP Events are a separate opt-in
+with an observed-destination binding gate. See the [coordination guide](docs/AGENT_COORDINATION.md)
+and [development acceptance record](docs/COORDINATION_ACCEPTANCE.md). This source
+feature is not included in the published b3 artifacts described below.
+
 Aster Universal MCP gives an owner-approved Claude connection tools to run commands, manage bounded background jobs, and transfer files on a Windows or Linux computer. It uses OAuth client registration, PKCE, short-lived access tokens, owner pairing and an explicit local client allowlist.
 
 **[v0.1.0b3](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b3) is the shared Windows and Linux onboarding beta**, with separate archives and acceptance records under one tag. Its exact artifacts passed their native, fresh-install and controlled public HTTPS gates. The owner explicitly waived repeating actual Claude-account testing for this update; no fresh b3 account success is claimed. The [release status](docs/RELEASE_STATUS.md) records this distinction and the supported reference environments.

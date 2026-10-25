@@ -22,6 +22,17 @@ def create_app():
         raise ValueError("allowed root or workspace missing")
     root, workspace = os.path.realpath(root), os.path.realpath(workspace)
     allowlist = os.environ.get("ASTER_ADMIN_CLIENTS", "/var/lib/aster-universal-mcp/admin-client-allowlist.json")
+    coordination_db = os.environ.get("ASTER_COORDINATION_DB")
+    native_events = os.environ.get("ASTER_COORDINATION_NATIVE_EVENTS")
+    if native_events not in (None, "0", "1"):
+        raise ValueError("ASTER_COORDINATION_NATIVE_EVENTS must be 0 or 1")
+    if native_events == "1" and coordination_db is None:
+        raise ValueError("native coordination events require ASTER_COORDINATION_DB")
+    if coordination_db is not None:
+        if not coordination_db or not Path(coordination_db).is_absolute():
+            raise ValueError("ASTER_COORDINATION_DB must be an absolute database path")
+        if Path(coordination_db).resolve() == Path(db).resolve():
+            raise ValueError("coordination and OAuth databases must be separate")
     def require_admin():
         current_client_access(allowlist).require_admin()
     def register(server):
@@ -91,6 +102,15 @@ def create_app():
             """Download a bounded base64 chunk at a byte offset."""
             require_admin()
             return admin_download_chunk(path, offset, limit)
+
+        if coordination_db is not None:
+            from coordination.tools import register_coordination_tools
+            store = register_coordination_tools(server, db_path=coordination_db,
+                                                allowlist_path=allowlist)
+            if native_events == "1":
+                from coordination.native import NativeEvents, install_native_events
+                install_native_events(server, NativeEvents(store, allowlist_path=allowlist,
+                                                          oauth_db_path=db))
 
     server=build_oauth_server(db_path=db,origin=origin,register_tools=register)
     host=origin.removeprefix("https://")

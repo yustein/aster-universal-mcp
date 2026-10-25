@@ -25,6 +25,17 @@ def create_app():
         raise ValueError("absolute existing workspace required")
     workspace = str(workspace.resolve(strict=True))
     allowlist_path = Path(os.environ["ASTER_WINDOWS_ADMIN_CLIENTS"])
+    coordination_db = os.environ.get("ASTER_COORDINATION_DB")
+    native_events = os.environ.get("ASTER_COORDINATION_NATIVE_EVENTS")
+    if native_events not in (None, "0", "1"):
+        raise ValueError("ASTER_COORDINATION_NATIVE_EVENTS must be 0 or 1")
+    if native_events == "1" and coordination_db is None:
+        raise ValueError("native coordination events require ASTER_COORDINATION_DB")
+    if coordination_db is not None:
+        if not coordination_db or not Path(coordination_db).is_absolute():
+            raise ValueError("ASTER_COORDINATION_DB must be an absolute database path")
+        if Path(coordination_db).resolve() == database.resolve():
+            raise ValueError("coordination and OAuth databases must be separate")
     from executor import run_command
     from job_launcher import start_job
     from jobs import job_status
@@ -84,6 +95,15 @@ def create_app():
         def read_file_chunk(path: str, offset: int, limit: int = 16384) -> dict:
             authenticated()
             return download_chunk(path, offset, limit)
+
+        if coordination_db is not None:
+            from coordination.tools import register_coordination_tools
+            store = register_coordination_tools(mcp, db_path=coordination_db,
+                                                allowlist_path=allowlist_path)
+            if native_events == "1":
+                from coordination.native import NativeEvents, install_native_events
+                install_native_events(mcp, NativeEvents(store, allowlist_path=allowlist_path,
+                                                       oauth_db_path=str(database)))
     server = build_oauth_server(db_path=str(database), origin=origin, register_tools=register)
     app = server.streamable_http_app(
         stateless_http=True, json_response=True, host="127.0.0.1",

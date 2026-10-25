@@ -4,17 +4,18 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aster-universal-mcp"
-version = "0.1.0b3"
-description = "Self-hosted authenticated MCP for Claude Free with owner-controlled privileged operations on Windows and Linux"
+version = "0.2.0a1"
+description = "Self-hosted authenticated MCP with optional provider-neutral agent coordination and Windows/Linux machine tools"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
-dependencies = ["mcp==2.3.0", "uvicorn>=0.30,<1", "python-multipart>=0.0.18,<1"]
+dependencies = ["mcp==2.3.0", "uvicorn>=0.30,<1", "python-multipart>=0.0.18,<1", "h11>=0.16,<1"]
 
 [project.optional-dependencies]
 windows = ["pywin32>=306"]
 test = ["pytest>=8,<10", "httpx>=0.27,<1"]
 
 [tool.setuptools]
+packages = ["coordination"]
 py-modules = ["oauth_service", "oauth_runtime", "oauth_token_resource", "provider_adapter", "approval_http",
   "approval_store", "approval_sessions", "client_registry", "token_store",
   "refresh_store", "oauth_codes", "sdk_auth_codes", "pairing",
