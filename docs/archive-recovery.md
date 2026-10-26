@@ -88,7 +88,8 @@ with verified values:
 | Field | Required value |
 | --- | --- |
 | `repository_type` | `rclone` for Drive; omitted in legacy configurations means `rclone` |
-| `repository` | `rclone:ty gdrive:aster-archive-restic` |
+| `rclone_remote` | Exact qualified section in the private rclone configuration; the example uses `aster-gdrive`, omitted in legacy configurations means `ty gdrive` |
+| `repository` | `rclone:aster-gdrive:aster-archive-restic` for that selected remote |
 | `drive_root_folder_id` | Exact verified private Drive parent folder ID |
 | `password_file` | Root-private file containing the generated high-entropy restic password |
 | `rclone_program` | Qualified `/home/tony/.local/bin/rclone` executable |
@@ -111,6 +112,12 @@ root processes against Tony's active user configuration. Token refresh may
 rewrite the selected file. A separate root-owned copy preserves the working
 user configuration and its ownership. The binary and checkout remain part of
 the trusted operator deployment; Tony already administers this host with sudo.
+The selected section must have `type = drive`, and the repository must start
+with that exact section name. Keep the owned OAuth client's client ID, client
+secret, and token together in this private copy. A refresh token from another
+client is not a substitute. The complete repository locator is pinned, so an
+already registered repository cannot silently change remotes. The legacy user
+rclone configuration is not rewritten by these scripts.
 
 On a replacement host, Google Drive must be reauthorized separately; possession
 of the restic password does not grant Google-account access. A complete recovery
@@ -295,7 +302,7 @@ file nor `/var/lib/aster-archive-backup`:
 
 ```bash
 umask 077
-export RESTIC_REPOSITORY='rclone:ty gdrive:aster-archive-restic'
+export RESTIC_REPOSITORY='rclone:aster-gdrive:aster-archive-restic'
 export RCLONE_DRIVE_ROOT_FOLDER_ID=EXACT_VERIFIED_PRIVATE_FOLDER_ID
 export RESTIC_PASSWORD_FILE=/secure/recovered-restic-password
 export RCLONE_CONFIG=/secure/newly-authorized-rclone.conf

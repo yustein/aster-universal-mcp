@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import configparser
 from datetime import datetime, timezone
 import fcntl
 import hashlib
@@ -73,6 +74,14 @@ def repository_type(value):
     if kind not in ("rclone", "sftp"):
         raise ValueError("unsupported repository type")
     return kind
+
+
+def drive_remote(value):
+    remote = value.get("rclone_remote", "ty gdrive")
+    if (not isinstance(remote, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9 _.-]{0,80}", remote)
+            or "REPLACE" in remote):
+        raise ValueError("use an explicit qualified rclone remote name")
+    return remote
 
 
 def validate_sftp(value):
@@ -147,13 +156,18 @@ def config(path):
     repository = value["repository"]
     kind = repository_type(value)
     if kind == "rclone":
-        if (not repository.startswith("rclone:ty gdrive:") or "REPLACE" in repository
-                or not repository.removeprefix("rclone:ty gdrive:").strip("/")):
+        remote = drive_remote(value)
+        prefix = "rclone:" + remote + ":"
+        if (not repository.startswith(prefix) or "REPLACE" in repository
+                or not repository.removeprefix(prefix).strip("/")):
             raise ValueError("use the exact dedicated qualified Drive repository")
         root_folder = value.get("drive_root_folder_id", "")
         if "REPLACE" in root_folder or not re.fullmatch(r"[A-Za-z0-9_-]{10,128}", root_folder):
             raise ValueError("use the exact verified private Drive parent folder ID")
-        private_file(value["rclone_config"])
+        remote_config = configparser.ConfigParser(interpolation=None)
+        remote_config.read_string(private_file(value["rclone_config"]).read_text())
+        if remote not in remote_config or remote_config[remote].get("type", "").strip().lower() != "drive":
+            raise ValueError("selected private rclone remote must be a Drive section")
         binaries = (value["restic_program"], value["rclone_program"])
     else:
         validate_sftp(value)

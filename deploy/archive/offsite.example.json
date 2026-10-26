@@ -1,7 +1,8 @@
 {
   "expected_hostname": "tony-Legion-Y540-15IRH",
   "repository_type": "rclone",
-  "repository": "rclone:ty gdrive:aster-archive-restic",
+  "rclone_remote": "aster-gdrive",
+  "repository": "rclone:aster-gdrive:aster-archive-restic",
   "drive_root_folder_id": "REPLACE_WITH_VERIFIED_PRIVATE_FOLDER_ID",
   "password_file": "/etc/aster-archive-backup/restic-password",
   "rclone_program": "/home/tony/.local/bin/rclone",

@@ -177,3 +177,60 @@ def test_legacy_drive_repository_pin_remains_valid_without_rewrite(tmp_path, mon
     original = path.read_bytes()
     assert value.identity()["repository_type"] == "rclone"
     assert path.read_bytes() == original
+
+
+@pytest.fixture
+def drive_configuration(tmp_path, monkeypatch):
+    if os.geteuid() != 0:
+        pytest.skip("operator configuration requires root-owned files and directories")
+    password = tmp_path / "password"
+    password.write_bytes(b"synthetic-owned-client-backup-password-only\n")
+    password.chmod(0o600)
+    remote = tmp_path / "rclone.conf"
+    remote.write_text("[aster-gdrive]\ntype = drive\nclient_id = synthetic-owned-client\n"
+                      "client_secret = synthetic-only\ntoken = {\"refresh_token\":\"synthetic-only\"}\n"
+                      "[ty gdrive]\ntype = drive\n[other-backend]\ntype = sftp\n")
+    remote.chmod(0o600)
+    monkeypatch.setattr(offsite.socket, "gethostname", lambda: "synthetic-host")
+    cfg = {"expected_hostname": "synthetic-host", "repository_type": "rclone", "rclone_remote": "aster-gdrive",
+           "repository": "rclone:aster-gdrive:aster-archive-restic", "drive_root_folder_id": "synthetic-folder-id",
+           "password_file": str(password), "rclone_config": str(remote), "restic_program": "/usr/bin/true",
+           "rclone_program": "/usr/bin/true", "backup_dir": str(tmp_path / "backups"),
+           "state_dir": str(tmp_path / "state"), "host": "synthetic-archive",
+           "key_escrow": {"verified": True, "reference": "https://chatgpt.com/library?file_id=synthetic",
+                          "password_sha256": hashlib.sha256(password.read_bytes()).hexdigest()}}
+    path = tmp_path / "offsite.json"
+    path.write_text(json.dumps(cfg))
+    path.chmod(0o600)
+    return path, cfg
+
+
+def test_owned_drive_remote_is_explicit_and_legacy_config_is_unchanged(drive_configuration):
+    path, cfg = drive_configuration
+    private = Path(cfg["rclone_config"])
+    original = private.read_bytes()
+    validated = offsite.config(path)
+    assert validated["rclone_remote"] == "aster-gdrive"
+    assert validated["repository"] == "rclone:aster-gdrive:aster-archive-restic"
+    assert private.read_bytes() == original
+
+
+def test_omitted_remote_preserves_the_legacy_drive_default(drive_configuration):
+    path, cfg = drive_configuration
+    cfg.pop("rclone_remote")
+    cfg["repository"] = "rclone:ty gdrive:aster-archive-restic"
+    path.write_text(json.dumps(cfg))
+    assert offsite.drive_remote(offsite.config(path)) == "ty gdrive"
+
+
+@pytest.mark.parametrize("remote,repository", [
+    ("aster-gdrive", "rclone:ty gdrive:aster-archive-restic"),
+    ("aster-gdrive", "rclone:aster-gdrive-other:aster-archive-restic"),
+    ("missing-drive", "rclone:missing-drive:aster-archive-restic"),
+    ("other-backend", "rclone:other-backend:aster-archive-restic"),
+])
+def test_drive_config_rejects_mismatched_missing_or_non_drive_remote(drive_configuration, remote, repository):
+    path, cfg = drive_configuration
+    path.write_text(json.dumps(cfg | {"rclone_remote": remote, "repository": repository}))
+    with pytest.raises(ValueError):
+        offsite.config(path)
