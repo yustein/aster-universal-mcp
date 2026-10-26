@@ -365,6 +365,28 @@ live in the separate `/var/lib/aster-archive-models` volume and are rebuilt from
 their pinned manifests; they are not part of the archive backup. Restore
 extraction continues to reject symbolic and hard links. Coordinate direct manual calls to the
 older local backup helper with scheduled runs; it predates the offsite lock.
+Persisted graph datasets, vector-store files and per-passage receipts can produce
+many more files than the original export. Restore qualification therefore accepts
+`--max-members` (default `2000000`, maximum `50000000`), counting both files and
+directory headers. For a larger known backup, explicitly choose an appropriate
+budget, for example `--max-members 20000000`; this does not reserve that many
+inodes or bypass the available-space checks. The helper validates the budget
+before creating disposable targets and records the chosen budget and actual
+extraction counts in its private state. Exceeding it fails safely in those
+disposable targets, which can be inspected and cleaned using the normal helper
+before a retry with a larger validated budget.
+
+Extraction retains at least 10,000 free inodes on each destination filesystem,
+including the inodes needed for implicit parent directories, as well as the
+existing 10 GiB byte reserve. Filesystems that cannot report inode capacity fail
+closed. Names are limited to 4096 UTF-8 bytes and 64 path components. Duplicate
+names are checked using a private temporary SQLite index on the disposable
+archive volume, with an 8 MiB page cache; consumed tar headers are discarded so
+metadata memory does not grow with the number of restored members. The index is
+excluded from accepted archive paths and removed on success or ordinary failure.
+All persisted Cognee state remains part of the backup. No extra full gzip pass is
+performed solely to count members.
+
 If upload succeeds but local housekeeping fails, retry resumes the saved upload
 receipt without creating another dump or uploading another snapshot. A requested
 remote prune is retryable even when a prior attempt already forgot the selected

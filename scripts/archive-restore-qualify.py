@@ -22,6 +22,8 @@ import uuid
 
 LABEL = "io.aster.archive.restore-token"
 RESERVE = 10 * 1024**3
+DEFAULT_MAX_MEMBERS = 2_000_000
+MAX_MEMBER_BUDGET = 50_000_000
 REPO = Path(__file__).resolve().parents[1]
 DEPLOY = REPO / "deploy/archive"
 PROBE = DEPLOY / "recovery_probe.py"
@@ -31,6 +33,12 @@ EXTENSION_DDL = {
     "vector": b"CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;",
     "plpgsql": b"CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;",
 }
+
+
+def validate_member_budget(value):
+    if type(value) is not int or not 1 <= value <= MAX_MEMBER_BUDGET:
+        raise ValueError("restore member budget must be between 1 and 50000000")
+    return value
 
 
 def prepare_restore_list(contents):
@@ -153,7 +161,10 @@ def main():
     parser.add_argument("--state-root", type=Path, default=DEPLOY / "private/recovery")
     parser.add_argument("--cleanup", type=Path, help="private state.json from this exact helper")
     parser.add_argument("--keep-targets", action="store_true")
+    parser.add_argument("--max-members", type=int, default=DEFAULT_MAX_MEMBERS,
+                        help="maximum streamed tar members, including retained graph files (1..50000000)")
     args = parser.parse_args()
+    validate_member_budget(args.max_members)
     if os.geteuid() != 0:
         raise ValueError("run through sudo; deployment credentials remain private")
     os.umask(0o077)
@@ -176,7 +187,8 @@ def main():
     state = {"version": 1, "token": token, "database": database,
              "volumes": {kind: database + "_" + kind for kind in ("objects", "auth", "config")},
              "stage": "preflight", "created_at": datetime.now(timezone.utc).isoformat(),
-             "owner": args.owner, "source": args.source, "import_id": args.import_id}
+             "owner": args.owner, "source": args.source, "import_id": args.import_id,
+             "max_members": args.max_members}
     save(state_path, state)
     print(json.dumps({"stage": "preflight", "checkpoint": str(state_path)}), flush=True)
     with (work / "operations.log").open("ab") as log:
@@ -253,8 +265,15 @@ def main():
                 for kind, target in (("objects", "archive"), ("auth", "auth"), ("config", "config")):
                     extract += ["-v", state["volumes"][kind] + ":/restore/" + target]
                 with (backup / "files.tar.gz").open("rb") as source:
-                    command(extract + ["--entrypoint", "python", "aster-conversation-archive:local", "-c", probe_code,
-                                       "extract", "--max-bytes", str(free - RESERVE)], log=log, source=source)
+                    extraction = json.loads(command(
+                        extract + ["--entrypoint", "python", "aster-conversation-archive:local", "-c", probe_code,
+                                   "extract", "--max-bytes", str(free - RESERVE),
+                                   "--max-members", str(args.max_members)],
+                        log=log, source=source, capture=True))
+                if extraction.get("result") != "pass" or extraction.get("max_members") != args.max_members:
+                    raise RuntimeError("restore extraction receipt mismatch")
+                state["extraction"] = extraction
+                save(state_path, state)
                 verify = COMPOSE + ["run", "--rm", "--no-deps", "-T",
                     "-e", "ASTER_ARCHIVE_ROOT=/var/lib/aster-archive",
                     "-v", state["volumes"]["objects"] + ":/var/lib/aster-archive:ro",

@@ -6,6 +6,7 @@ The extract mode runs only in a separate container with new disposable volumes.
 from __future__ import annotations
 
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
@@ -15,7 +16,38 @@ import shutil
 import sqlite3
 import sys
 import tarfile
+import tempfile
 import uuid
+
+
+DEFAULT_MAX_MEMBERS = 2_000_000
+MAX_MEMBER_BUDGET = 50_000_000
+MIN_FREE_INODES = 10_000
+MAX_MEMBER_NAME_BYTES = 4096
+MAX_MEMBER_DEPTH = 64
+STORAGE_RESERVE = 10 * 1024**3
+
+
+def validate_member_budget(value):
+    if type(value) is not int or not 1 <= value <= MAX_MEMBER_BUDGET:
+        raise ValueError("restore member budget must be between 1 and 50000000")
+    return value
+
+
+def require_inode_reserve(root, needed):
+    capacity = os.statvfs(root)
+    if capacity.f_files <= 0 or capacity.f_favail < MIN_FREE_INODES + needed:
+        raise ValueError("restore inode reserve reached or unavailable")
+
+
+def missing_directories(directory, root):
+    missing = []
+    while directory != root and not directory.exists():
+        missing.append(directory)
+        directory = directory.parent
+    if not directory.is_dir():
+        raise ValueError("backup parent is not a directory")
+    return list(reversed(missing))
 
 
 def file_hash(path):
@@ -23,54 +55,90 @@ def file_hash(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def extract_stream(max_bytes, base=Path("/restore")):
+def extract_stream(max_bytes, base=Path("/restore"), *, max_members=DEFAULT_MAX_MEMBERS):
+    validate_member_budget(max_members)
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("positive restore byte budget required")
     roots = {name: base / name for name in ("archive", "auth", "config")}
     if not all(root.is_dir() and not any(root.iterdir()) for root in roots.values()):
         raise ValueError("restore volumes must be empty")
-    total, seen, files = 0, set(), 0
-    with tarfile.open(fileobj=sys.stdin.buffer, mode="r|gz") as archive:
-        for member in archive:
-            path = PurePosixPath(member.name)
-            if (path.is_absolute() or "\\" in member.name or ".." in path.parts
-                    or not path.parts or path.parts[0] not in roots
-                    or not (member.isdir() or member.isfile())):
-                raise ValueError("unsupported backup member")
-            name = path.as_posix()
-            if name in seen:
-                raise ValueError("duplicate backup member")
-            seen.add(name)
-            if len(seen) > 100_000:
-                raise ValueError("too many backup members")
-            if path.parts[0] != "archive" and name not in (
-                    "auth", "config", "auth/oauth.sqlite3", "config/clients.json"):
-                raise ValueError("unsupported private-state member")
-            destination = base / path
-            if member.isdir():
-                destination.mkdir(mode=0o700, parents=True, exist_ok=True)
-            else:
-                total += member.size
-                if member.size < 0 or total > max_bytes:
-                    raise ValueError("restore byte budget exceeded")
-                if shutil.disk_usage(roots[path.parts[0]]).free < member.size + 10 * 1024**3:
-                    raise ValueError("restore storage reserve reached")
-                destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-                source = archive.extractfile(member)
-                if source is None:
-                    raise ValueError("missing backup member stream")
-                with source, destination.open("xb") as output:
-                    shutil.copyfileobj(source, output, length=1024 * 1024)
-                if destination.stat().st_size != member.size:
-                    raise ValueError("truncated backup member")
-                destination.chmod(0o600 if member.mode & 0o200 else 0o400)
-                files += 1
+    require_inode_reserve(roots["archive"], 2)  # Private index directory and database.
+    if shutil.disk_usage(roots["archive"]).free < STORAGE_RESERVE + 1024**2:
+        raise ValueError("restore storage reserve reached")
+    total, files, members = 0, 0, 0
+    # A Python set of names and TarFile's default header cache both grow with
+    # every member. Keep duplicate detection on the disposable volume instead;
+    # this private temporary directory is never accepted from the archive.
+    with tempfile.TemporaryDirectory(prefix=".aster-restore-index-", dir=roots["archive"]) as temporary:
+        index_root = Path(temporary)
+        with closing(sqlite3.connect(index_root / "members.sqlite3", isolation_level=None)) as seen:
+            seen.execute("PRAGMA journal_mode=OFF")
+            seen.execute("PRAGMA synchronous=OFF")
+            seen.execute("PRAGMA cache_size=-8192")
+            seen.execute("PRAGMA temp_store=MEMORY")
+            seen.execute("CREATE TABLE members(name TEXT PRIMARY KEY) WITHOUT ROWID")
+            with tarfile.open(fileobj=sys.stdin.buffer, mode="r|gz") as archive:
+                while (member := archive.next()) is not None:
+                    # Python 3.12 retains TarInfo even in stream mode. Links are
+                    # forbidden and extractfile receives this exact TarInfo, so
+                    # no previous header is needed to extract the current one.
+                    archive.members.clear()
+                    members += 1
+                    if members > max_members:
+                        raise ValueError("restore member budget exceeded")
+                    path = PurePosixPath(member.name)
+                    if (path.is_absolute() or "\\" in member.name or "\x00" in member.name
+                            or ".." in path.parts or not path.parts or path.parts[0] not in roots
+                            or len(member.name.encode("utf-8")) > MAX_MEMBER_NAME_BYTES
+                            or len(path.parts) > MAX_MEMBER_DEPTH
+                            or not (member.isdir() or member.isfile())):
+                        raise ValueError("unsupported backup member")
+                    name = path.as_posix()
+                    if path.parts[0] != "archive" and name not in (
+                            "auth", "config", "auth/oauth.sqlite3", "config/clients.json"):
+                        raise ValueError("unsupported private-state member")
+                    if len(path.parts) > 1 and path.parts[:2] == ("archive", index_root.name):
+                        raise ValueError("reserved restore index member")
+                    # Account for index growth even for a stream of directories
+                    # or empty files. This remains a headroom check, not a quota.
+                    if shutil.disk_usage(roots["archive"]).free < STORAGE_RESERVE + 64 * 1024:
+                        raise ValueError("restore storage reserve reached")
+                    try:
+                        seen.execute("INSERT INTO members(name) VALUES (?)", (name,))
+                    except sqlite3.IntegrityError:
+                        raise ValueError("duplicate backup member") from None
+                    destination = base / path
+                    root = roots[path.parts[0]]
+                    directories = missing_directories(destination if member.isdir() else destination.parent, root)
+                    require_inode_reserve(root, len(directories) + int(member.isfile()))
+                    if member.isfile():
+                        total += member.size
+                        if member.size < 0 or total > max_bytes:
+                            raise ValueError("restore byte budget exceeded")
+                    if shutil.disk_usage(root).free < STORAGE_RESERVE + (member.size if member.isfile() else 0):
+                        raise ValueError("restore storage reserve reached")
+                    for directory in directories:
+                        directory.mkdir(mode=0o700)
+                        os.chown(directory, 10001, 10001, follow_symlinks=False)
+                    if member.isdir():
+                        os.chown(destination, 10001, 10001, follow_symlinks=False)
+                    else:
+                        source = archive.extractfile(member)
+                        if source is None:
+                            raise ValueError("missing backup member stream")
+                        with source, destination.open("xb") as output:
+                            shutil.copyfileobj(source, output, length=1024 * 1024)
+                        if destination.stat().st_size != member.size:
+                            raise ValueError("truncated backup member")
+                        destination.chmod(0o600 if member.mode & 0o200 else 0o400)
+                        os.chown(destination, 10001, 10001, follow_symlinks=False)
+                        files += 1
     for root in roots.values():
-        for directory, children, names in os.walk(root, followlinks=False):
-            for name in children + names:
-                os.chown(Path(directory) / name, 10001, 10001, follow_symlinks=False)
-            os.chown(directory, 10001, 10001, follow_symlinks=False)
+        os.chown(root, 10001, 10001, follow_symlinks=False)
     if not (roots["auth"] / "oauth.sqlite3").is_file() or not (roots["config"] / "clients.json").is_file():
         raise ValueError("missing private-state members")
-    return {"files": files, "bytes": total, "separate_volumes": True}
+    return {"files": files, "members": members, "max_members": max_members,
+            "bytes": total, "separate_volumes": True, "min_free_inodes": MIN_FREE_INODES}
 
 
 def enrichment_probe(store, scope, args):
@@ -289,13 +357,14 @@ def main():
     parser.add_argument("--query", default="ChatGPT")
     parser.add_argument("--database")
     parser.add_argument("--max-bytes", type=int)
+    parser.add_argument("--max-members", type=int, default=DEFAULT_MAX_MEMBERS)
     parser.add_argument("--check-embedding", action="store_true")
     parser.add_argument("--check-knowledge", action="store_true")
     parser.add_argument("--check-cognee", action="store_true")
     args = parser.parse_args()
     if args.mode == "extract":
         assert args.max_bytes is not None and args.max_bytes > 0
-        result = extract_stream(args.max_bytes)
+        result = extract_stream(args.max_bytes, max_members=args.max_members)
     else:
         assert args.import_id is not None
         expected = json.load(sys.stdin) if args.mode == "verify" else None
