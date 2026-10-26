@@ -27,6 +27,19 @@ host/VM headroom and measure the largest conversation before increasing workers.
 The worker processes bounded jobs; a per-source database lock protects imports
 of the same account/workspace from concurrent reconciliation.
 
+`ASTER_ARCHIVE_MIN_FREE_BYTES` reserves **10 GiB** of free-space headroom in this
+deployment; the application default outside Compose is 1 GiB. Before copying an
+export, available space must cover that reserve **plus the complete source file
+size**. Before each conversation transaction, the importer checks the reserve
+again. Low space produces a retryable I/O failure and preserves committed
+checkpoints; it does not quarantine the export as malformed. The setting is a
+positive byte count, bounded at 1 PiB. Checks measure the filesystem backing the
+archive/CAS root, so a PostgreSQL volume on a different filesystem needs separate
+capacity monitoring. These checks provide headroom, not a quota against other
+host processes; verify free space and resolve low-space receipts before retrying.
+Malformed reserve configuration fails worker, dispatch and watcher startup before
+pending imports can be misclassified as invalid source data.
+
 ## Prepare private configuration
 
 From this directory:

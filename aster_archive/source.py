@@ -18,6 +18,8 @@ import zipfile
 
 import ijson
 
+from .storage import require_storage_reserve
+
 
 class SourceError(ValueError):
     """The snapshot cannot be safely or unambiguously imported."""
@@ -187,6 +189,9 @@ def prepare_source(path: Path, archive_root: Path, limits: SourceLimits | None =
                 raise SourceError("source must be a regular file")
             if before.st_size > limits.max_archive_bytes:
                 raise SourceError("source size exceeds configured limit")
+            # Account for the complete temporary copy before creating it; low
+            # space is retryable I/O, not an invalid-source quarantine receipt.
+            require_storage_reserve(archive_root, additional_bytes=before.st_size)
             digest = hashlib.sha256()
             size = 0
             with tempfile.NamedTemporaryFile(dir=archive_root, prefix=".pending-", delete=False) as target:

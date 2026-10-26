@@ -24,6 +24,7 @@ x-archive-service: &archive-service
 x-writer-environment: &writer-environment
   ASTER_ARCHIVE_DATABASE_URL: "postgresql://aster_archive_ingest:${ASTER_ARCHIVE_INGEST_PASSWORD:?Set a random hexadecimal ingest password}@db:5432/aster_archive"
   ASTER_ARCHIVE_ROOT: /var/lib/aster-archive
+  ASTER_ARCHIVE_MIN_FREE_BYTES: "${ASTER_ARCHIVE_MIN_FREE_BYTES:-10737418240}"
 
 services:
   db:

@@ -24,6 +24,8 @@ from procrastinate.job_context import AbortReason
 import psycopg
 from psycopg.rows import dict_row
 
+from .storage import minimum_free_bytes
+
 PINNED_QUEUE_VERSION = "3.10.0"
 IMPORT_QUEUE = "aster_archive_import"
 MAINTENANCE_QUEUE = "aster_archive_maintenance"
@@ -249,6 +251,9 @@ async def recover_stalled(app, dsn: str) -> int:
 
 
 def build_app(dsn: str, archive_root: str | Path):
+    # Reject operator configuration before opening a queue or consuming jobs.
+    # A malformed reserve is not a permanent failure of otherwise valid data.
+    minimum_free_bytes()
     _version_check()
     archive_root = Path(archive_root)
     if not archive_root.is_absolute():

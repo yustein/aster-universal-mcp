@@ -10,6 +10,7 @@ from psycopg.types.json import Jsonb
 from .normalize import NormalizationError, normalize_conversation
 from .source import load_source, prepare_source, iter_conversations
 from .store import PostgresArchive
+from .storage import require_storage_reserve
 
 
 def import_registered(store: PostgresArchive, import_id: str, archive_root: Path) -> dict:
@@ -33,12 +34,15 @@ def import_registered(store: PostgresArchive, import_id: str, archive_root: Path
                     continue
                 try:
                     normalized = normalize_conversation(raw)
+                    require_storage_reserve(root)
                     store.commit_item(conn, import_id, member, ordinal, normalized)
                 except NormalizationError:
+                    require_storage_reserve(root)
                     store.commit_invalid(conn, import_id, member, ordinal, "unsupported_conversation")
                 except psycopg.DataError:
                     # For example PostgreSQL JSONB cannot represent a NUL
                     # character. Preserve the original and report the gap.
+                    require_storage_reserve(root)
                     store.commit_invalid(conn, import_id, member, ordinal, "unrepresentable_database_value")
             with conn.transaction():
                 errors = conn.execute("""SELECT count(*) AS n FROM aster_archive.import_items

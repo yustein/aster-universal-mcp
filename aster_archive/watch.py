@@ -9,11 +9,14 @@ import threading
 
 from .source import SourceError, prepare_source
 from .store import PostgresArchive
+from .storage import minimum_free_bytes
 
 
 class InboxWatcher:
     def __init__(self, store: PostgresArchive, *, inbox: Path, archive_root: Path,
                  owner_id: str, source_id: str):
+        # Fail once at startup, outside the per-source retry/quarantine paths.
+        minimum_free_bytes()
         self.store = store
         self.inbox = Path(inbox).resolve(strict=True)
         self.archive_root = Path(archive_root).resolve()

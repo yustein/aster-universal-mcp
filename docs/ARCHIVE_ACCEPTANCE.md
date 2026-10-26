@@ -94,6 +94,28 @@ available in the development environment. Image construction, container startup,
 reverse-proxy peer identity and full container operation therefore remain
 unverified here.
 
+## Storage reserve follow-up
+
+After the combined result above, a storage headroom guard was added for native
+Lenomila deployment. Compose reserves 10 GiB; source acquisition requires this
+reserve plus the complete incoming file size, and ingestion checks again before
+each conversation/checkpoint transaction. Capacity failures remain retryable I/O
+errors. Worker, dispatch and watcher startup reject malformed reserve settings
+before they can classify valid pending data as an invalid export.
+
+The initial guard's selected source/storage/import regression run passed 70 tests
+in 2.71 seconds. After the startup-validation refinement, the storage, queue and
+watcher suites passed 30 tests in 0.93 seconds against the same disposable
+PostgreSQL 18 database. These overlapping focused results are separate from the
+earlier combined suite; they are not an additional full-suite result.
+
+The real-database checks preserve a committed checkpoint through low space and
+resume without duplicate revisions. They also verify that malformed reserve
+configuration leaves a valid import pending, with no queue acknowledgement,
+queued job, quarantine receipt or dead letter. The guard measures the archive
+filesystem and does not reserve space against other host processes or monitor a
+database placed on another filesystem.
+
 ## Limits on this acceptance
 
 This is development evidence for the exact implemented archive behavior. It does
