@@ -62,7 +62,8 @@ def unit_state(names):
 def containers():
     result = {}
     configured = set(run(recovery.COMPOSE + ["config", "--services"]).splitlines())
-    template = "{{.Id}}|{{.Image}}|{{.Name}}|{{.State.Status}}|{{.HostConfig.RestartPolicy.Name}}|{{if .State.Health}}{{.State.Health.Status}}{{end}}|{{json .Mounts}}"
+    # Docker omits Health when no healthcheck is configured; index safely returns nil.
+    template = '{{.Id}}|{{.Image}}|{{.Name}}|{{.State.Status}}|{{.HostConfig.RestartPolicy.Name}}|{{with index .State "Health"}}{{.Status}}{{end}}|{{json .Mounts}}'
     for service in ("db", "watch", "worker", "mcp", *ENRICHMENT_SERVICES):
         optional = service in ("mcp", *ENRICHMENT_SERVICES)
         if optional and service not in configured:
