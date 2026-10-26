@@ -13,6 +13,7 @@ dependencies = ["mcp==2.3.0", "uvicorn>=0.30,<1", "python-multipart>=0.0.18,<1"]
 [project.optional-dependencies]
 windows = ["pywin32>=306"]
 test = ["pytest>=8,<10", "httpx>=0.27,<1"]
+archive = ["ijson==3.6.0", "psycopg[binary]==3.3.6", "procrastinate==3.10.0"]
 
 [tool.setuptools]
 py-modules = ["oauth_service", "oauth_runtime", "oauth_token_resource", "provider_adapter", "approval_http",
@@ -23,3 +24,9 @@ py-modules = ["oauth_service", "oauth_runtime", "oauth_token_resource", "provide
   "admin_jobs", "file_transfer", "filesystem", "proxy_security", "oauth_http_diagnostics",
   "gated_runtime", "identity", "local_token_verifier", "bearer_gate",
   "restricted_executor", "aster_mcp"]
+
+[tool.setuptools.packages.find]
+include = ["aster_archive*"]
+
+[tool.setuptools.package-data]
+aster_archive = ["schema.sql"]

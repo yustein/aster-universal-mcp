@@ -10,6 +10,16 @@ This is a source-based, manually started **privileged administration beta** for 
 
 **New in b3:** authenticated `connection_status`, actionable approval errors and permission-aware Linux directory listing. The immutable Windows `v0.1.0b1` and Linux `v0.1.0b2` downloads retain their original behavior; updating documentation or the repository does not update an installed gateway. The b3 source archives and tag remain at tested commit `6d792d0920875bf3cb958b83744cca7a5fc1ec1e`. Their packaged documentation was frozen before qualification; the matching release acceptance assets and [release/operator guide](https://github.com/yustein/aster-universal-mcp/releases/download/v0.1.0b3/ASTER_0.1.0b3_RELEASE_OPERATOR_ONBOARDING_GUIDE.md) supply the final result without rewriting tested bytes.
 
+## Optional conversation archive development
+
+The source includes an opt-in [conversation archive](docs/CONVERSATION_ARCHIVE.md)
+with resumable ChatGPT export ingestion, PostgreSQL lexical search, durable jobs,
+and a dedicated authenticated read-only MCP service. Its
+[deployment package](deploy/archive/README.md) is separate from the published
+machine-control beta. This development addition has no published release tag;
+see its [verification record](docs/ARCHIVE_ACCEPTANCE.md) before treating a host
+deployment as qualified.
+
 ## Install the Windows v0.1.0b3 beta
 
 Download the matching [b3 release assets](https://github.com/yustein/aster-universal-mcp/releases/tag/v0.1.0b3):

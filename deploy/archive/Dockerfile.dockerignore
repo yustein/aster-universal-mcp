@@ -1,0 +1,18 @@
+# Send only build inputs. Private configuration, exports, virtualenvs and Git
+# metadata must not enter the Docker build context.
+**
+!pyproject.toml
+!README.md
+!requirements-archive-lock.txt
+!*.py
+!aster_archive/
+!aster_archive/*.py
+!aster_archive/schema.sql
+!deploy/
+!deploy/archive/
+!deploy/archive/backup_state.py
+!deploy/archive/operator.py
+.git/**
+.venv/**
+deploy/archive/private/**
+**/__pycache__/**
