@@ -15,7 +15,7 @@ import tempfile
 
 import pytest
 
-from deploy.archive import operator
+from deploy.archive import archive_operator
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,15 +30,15 @@ def auth_state():
         parent.chmod(0o755)
         directory = parent / "auth"
         directory.mkdir(mode=0o700)
-        database = directory / operator.DATABASE
+        database = directory / archive_operator.DATABASE
         connection = sqlite3.connect(database)
         connection.execute("PRAGMA journal_mode=WAL")
         connection.execute("CREATE TABLE synthetic_state(value text)")
         connection.execute("INSERT INTO synthetic_state VALUES ('fixture-only')")
         connection.commit()
         database.chmod(0o600)
-        os.chown(database, operator.SERVICE_UID, operator.SERVICE_GID)
-        os.chown(directory, operator.SERVICE_UID, operator.SERVICE_GID)
+        os.chown(database, archive_operator.SERVICE_UID, archive_operator.SERVICE_GID)
+        os.chown(directory, archive_operator.SERVICE_UID, archive_operator.SERVICE_GID)
         # Keep the connection open so actual WAL/SHM files remain. Root-owned
         # sidecars model the problematic state created by a root-only helper.
         for suffix in ("-wal", "-shm"):
@@ -66,7 +66,7 @@ def test_existing_root_helper_works_with_only_three_caps_and_service_can_reopen_
     directory, _ = auth_state
     code = """
 import pathlib, sys
-from deploy.archive.operator import run_operation
+from deploy.archive.archive_operator import run_operation
 effective = int(next(line.split()[1] for line in pathlib.Path('/proc/self/status').read_text().splitlines() if line.startswith('CapEff:')), 16)
 assert effective == 0b1011, effective
 run_operation('revoke', auth_directory=pathlib.Path(sys.argv[1]))
@@ -83,7 +83,7 @@ run_operation('revoke', auth_directory=pathlib.Path(sys.argv[1]))
         "setpriv", "--reuid=10001", "--regid=10001", "--clear-groups",
         sys.executable, "-c",
         "import sqlite3,sys; db=sqlite3.connect(sys.argv[1]); assert db.execute('SELECT value FROM synthetic_state').fetchone()[0]=='fixture-only'; db.execute(\"INSERT INTO synthetic_state VALUES ('service-write')\"); db.commit(); db.close()",
-        str(directory / operator.DATABASE),
+        str(directory / archive_operator.DATABASE),
     ], cwd="/tmp", text=True, capture_output=True, timeout=20)
     assert service.returncode == 0, service.stderr
 
@@ -92,7 +92,7 @@ run_operation('revoke', auth_directory=pathlib.Path(sys.argv[1]))
 def test_helper_error_still_restores_database_wal_and_directory_ownership(auth_state):
     directory, _ = auth_state
     with pytest.raises(SystemExit) as result:
-        operator.run_operation("inspect", auth_directory=directory, request_id="synthetic-missing-request")
+        archive_operator.run_operation("inspect", auth_directory=directory, request_id="synthetic-missing-request")
     assert result.value.code == 2
     assert_service_ownership(directory)
 
@@ -105,26 +105,26 @@ def test_symlink_database_is_rejected_without_following_or_chowning_target(tmp_p
     target.write_text("synthetic untouched data")
     target.chmod(0o640)
     before = target.stat()
-    (directory / operator.DATABASE).symlink_to(target)
+    (directory / archive_operator.DATABASE).symlink_to(target)
     with pytest.raises(OSError):
-        operator.run_operation("revoke", auth_directory=directory)
+        archive_operator.run_operation("revoke", auth_directory=directory)
     after = target.stat()
     assert (after.st_uid, after.st_gid, after.st_mode) == (before.st_uid, before.st_gid, before.st_mode)
     assert target.read_text() == "synthetic untouched data"
 
 
 def test_wrapper_does_not_bypass_existing_root_requirement(monkeypatch, tmp_path):
-    monkeypatch.setattr(operator.os, "geteuid", lambda: 10001)
-    with pytest.raises(operator.OperatorError, match="root"):
-        operator.run_operation("revoke", auth_directory=tmp_path)
+    monkeypatch.setattr(archive_operator.os, "geteuid", lambda: 10001)
+    with pytest.raises(archive_operator.OperatorError, match="root"):
+        archive_operator.run_operation("revoke", auth_directory=tmp_path)
 
 
 @ROOT_ONLY
 def test_unknown_commands_are_rejected_without_invoking_a_helper(monkeypatch, tmp_path):
     called = []
-    monkeypatch.setattr(operator, "_invoke_helper", lambda *args, **kwargs: called.append(args))
-    with pytest.raises(operator.OperatorError, match="Unsupported"):
-        operator.run_operation("arbitrary-python", auth_directory=tmp_path)
+    monkeypatch.setattr(archive_operator, "_invoke_helper", lambda *args, **kwargs: called.append(args))
+    with pytest.raises(archive_operator.OperatorError, match="Unsupported"):
+        archive_operator.run_operation("arbitrary-python", auth_directory=tmp_path)
     assert called == []
 
 
@@ -132,3 +132,15 @@ def test_operator_shell_syntax():
     result = subprocess.run(["sh", "-n", str(ROOT / "deploy/archive/operator.sh")],
                             capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
+
+
+def test_operator_script_help_starts_in_cold_python():
+    # -S prevents site initialization from preloading stdlib operator. Keep the
+    # script directory on sys.path as in deployment; -I/-P would hide collisions.
+    result = subprocess.run([
+        sys.executable, "-E", "-S", "-B",
+        str(ROOT / "deploy/archive/archive_operator.py"), "--help",
+    ], cwd=ROOT, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert "usage: archive_operator.py" in result.stdout
+    assert "{issue,revoke,inspect,approve}" in result.stdout

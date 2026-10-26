@@ -11,7 +11,7 @@
 !deploy/
 !deploy/archive/
 !deploy/archive/backup_state.py
-!deploy/archive/operator.py
+!deploy/archive/archive_operator.py
 .git/**
 .venv/**
 deploy/archive/private/**

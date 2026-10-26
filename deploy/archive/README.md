@@ -48,7 +48,7 @@ From this directory:
 umask 077
 # This public script is bind-mounted and read by PostgreSQL UID 999.
 # A clone made under a private umask can otherwise leave it unreadable.
-chmod 644 init-db.sh
+chmod 755 init-db.sh
 cp .env.example .env
 chmod 600 .env
 mkdir -p private/config

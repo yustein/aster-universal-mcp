@@ -180,7 +180,7 @@ services:
     restart: "no"
     init: true
     user: "0:0"
-    entrypoint: ["python", "deploy/archive/operator.py"]
+    entrypoint: ["python", "deploy/archive/archive_operator.py"]
     command: ["--help"]
     network_mode: none
     read_only: true

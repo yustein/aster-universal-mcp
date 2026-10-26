@@ -5,7 +5,7 @@ COPY pyproject.toml README.md requirements-archive-lock.txt ./
 COPY *.py ./
 COPY aster_archive ./aster_archive
 COPY deploy/archive/backup_state.py ./deploy/archive/backup_state.py
-COPY deploy/archive/operator.py ./deploy/archive/operator.py
+COPY deploy/archive/archive_operator.py ./deploy/archive/archive_operator.py
 RUN python -m venv /opt/venv \
     && /opt/venv/bin/pip install -r requirements-archive-lock.txt \
     && /opt/venv/bin/pip install --no-deps .
