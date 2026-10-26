@@ -14,7 +14,7 @@ The recovery chain has three distinct checks:
    reader role. Compare coverage, exact passage hashes, source offsets, branch
    context, the original export SHA256, OAuth SQLite integrity, and client ACL.
 2. Encrypt that exact backup with restic, upload it to the verified private
-   Google Drive repository, download the same snapshot into a new private
+   offsite repository, download the same snapshot into a new private
    directory using a separately retrieved escrow-key copy, and compare all
    backup checksums. This links the independent copy to the bytes whose actual
    database and source restore already passed.
@@ -74,7 +74,7 @@ the qualified backup.
 
 ## 2. Configure independent encrypted storage and key escrow
 
-The host needs the qualified rclone binary, an explicitly identified working
+The default Drive backend needs the qualified rclone binary, an explicitly identified working
 rclone configuration, and restic with repository-version-2 support. Check the
 installed versions and package provenance on the host before starting. The
 wrapper uses `/home/tony/.local/bin/rclone` rather than silently selecting another
@@ -87,6 +87,7 @@ with verified values:
 
 | Field | Required value |
 | --- | --- |
+| `repository_type` | `rclone` for Drive; omitted in legacy configurations means `rclone` |
 | `repository` | `rclone:ty gdrive:aster-archive-restic` |
 | `drive_root_folder_id` | Exact verified private Drive parent folder ID |
 | `password_file` | Root-private file containing the generated high-entropy restic password |
@@ -102,7 +103,7 @@ with verified values:
 The password itself must not appear in JSON configuration, command arguments,
 Git, logs, image layers, or chat text. The operator retains a local `0600` copy
 for unattended operation and a separately recoverable copy in Tony's private
-ChatGPT file account. The ciphertext repository is in Google Drive. Preserve
+ChatGPT file account. The ciphertext repository is independent of that escrow. Preserve
 the repository locator and recovery instructions with the escrow record.
 
 Copy the qualified rclone configuration privately rather than running scheduled
@@ -139,6 +140,94 @@ sudo -n python3 /home/tony/aster-conversation-archive/scripts/archive-offsite.py
 If the operator already initialized that exact repository, use `register` instead
 of `init`. Registration reads and pins its repository ID. Subsequent operations
 refuse an unexpected repository identity.
+
+### Optional dedicated SFTP repository
+
+The SFTP backend is an explicit alternative when the operator has qualified a
+separate destination and its capacity. It does not initialize a server or change
+SSH configuration. Use `deploy/archive/offsite-sftp.example.json`, retain the
+same private restic password/independent escrow checks, and provide these fields:
+
+| Field | Exact value |
+| --- | --- |
+| `repository_type` | `sftp` |
+| `repository` | `sftp:aster-archive-backup:/repository` |
+| `ssh_config` | `/etc/aster-archive-backup/ssh_config` |
+| `ssh_known_hosts` | `/etc/aster-archive-backup/known_hosts` |
+| `ssh_identity_file` | `/etc/aster-archive-backup/id_ed25519` |
+
+The remote account is confined to the root-owned chroot
+`/srv/aster-archive-offsite`; `/repository` is its client-visible writable
+directory, physically `/srv/aster-archive-offsite/repository`. Qualify the
+dedicated account with forced `internal-sftp`, public-key authentication only,
+and no shell, TTY, or forwarding. Verify the server's Ed25519 host key through an
+independent established administration route before creating `known_hosts`.
+The wrapper does not treat an unverified network key scan as a trust decision.
+
+All three local SSH files and their common directory must be root-private
+regular files/directory. The identity must be a dedicated unattended Ed25519 key.
+Use this single-host SSH configuration, replacing only the verified hostname,
+dedicated account name, and port if needed:
+
+```sshconfig
+Host aster-archive-backup
+    HostName REPLACE_WITH_VERIFIED_HOSTNAME
+    User REPLACE_WITH_DEDICATED_ACCOUNT
+    Port 22
+    IdentityFile /etc/aster-archive-backup/id_ed25519
+    UserKnownHostsFile /etc/aster-archive-backup/known_hosts
+    GlobalKnownHostsFile /dev/null
+    HostKeyAlias aster-archive-backup
+    HostKeyAlgorithms ssh-ed25519
+    BatchMode yes
+    StrictHostKeyChecking yes
+    IdentitiesOnly yes
+    IdentityAgent none
+    PreferredAuthentications publickey
+    PubkeyAuthentication yes
+    PasswordAuthentication no
+    KbdInteractiveAuthentication no
+    UpdateHostKeys no
+    VerifyHostKeyDNS no
+    ForwardAgent no
+    ClearAllForwardings yes
+    RequestTTY no
+    ControlMaster no
+    ControlPath none
+    ControlPersist no
+    PermitLocalCommand no
+    ConnectTimeout 15
+    ConnectionAttempts 1
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    LogLevel ERROR
+```
+
+`known_hosts` must contain exactly one verified key line, with the alias as its
+first field: `aster-archive-backup ssh-ed25519 VERIFIED_PUBLIC_KEY_BASE64`.
+The wrapper rejects Includes, extra hosts, executable configuration directives,
+password fallback, and unpinned host-key settings. It uses system OpenSSH and
+the official restic option `sftp.args=-F /etc/aster-archive-backup/ssh_config`,
+limits SFTP connections to two, clears inherited SSH agent/askpass settings,
+and never needs rclone configuration or a Drive folder ID in this mode.
+
+Before every SFTP upload, batch `df /repository` obtains the server's
+`statvfs@openssh.com` capacity report without a remote shell command. A missing
+extension, failed request, unrecognized report, or less than **50 GiB plus the
+exact four-file backup size** of unprivileged available space fails closed
+before `restic backup`. The private receipt records only capacity numbers.
+This is a measured headroom guard, not a quota or space reservation against
+concurrent server workloads; qualify server-side isolation separately.
+
+The repository pin records backend type, repository ID/locator, and hashes of
+the exact SSH configuration, known-hosts file, and identity. Changing these
+requires explicit operator review and a new qualified state; registration does
+not silently overwrite an old pin. Use a fresh state directory when switching
+from an already registered Drive repository. The SFTP example uses
+`/var/lib/aster-archive-backup-sftp`; pass that same directory with
+`--offsite-state-dir` to the reboot checker. Timers must select the intended
+private configuration file. Retention, independent escrow-key recovery,
+exact-file checks, and snapshot round-trip proof stay the same for both backends.
 
 ## 3. Upload and prove the independent copy
 
@@ -199,7 +288,7 @@ locator, qualified snapshot ID, repository ID, source commit, PostgreSQL/archive
 image versions, and the owner/source/import identities. Retain the completed
 restore proof and its manifest digest there as well.
 
-On a replacement host, install trusted restic/rclone binaries and authorize
+For a Drive repository on a replacement host, install trusted restic/rclone binaries and authorize
 Google Drive through the user's account. Recover the escrow password to a
 private file. These direct commands require neither the old operational key
 file nor `/var/lib/aster-archive-backup`:
@@ -221,6 +310,15 @@ empty private target directory:
 restic -o rclone.program=/verified/path/to/rclone restore EXACT_FULL_SNAPSHOT_ID \
   --target /secure/new-empty-restore-directory
 ```
+
+For the SFTP alternative, independently recover or reauthorize the dedicated SSH
+identity and verified host-key record, recreate the private SSH configuration,
+and use `RESTIC_REPOSITORY='sftp:aster-archive-backup:/repository'` with
+`restic -o 'sftp.args=-F /etc/aster-archive-backup/ssh_config'` for the same
+`snapshots` and `restore` commands. The restic password alone does not grant SSH
+access. Preserve the physical/chroot path mapping and separate SSH recovery
+instructions with the escrow record; the four-file data backup does not contain
+the offsite SSH key or its server account configuration.
 
 The absolute backup path is recreated below that target. Validate its
 `SHA256SUMS` and compare the manifest digest with the independently retained
@@ -392,3 +490,6 @@ control has been reconstructed.
 - [Restic retention and pruning](https://restic.readthedocs.io/en/stable/060_forget.html)
 - [Restic scripting and JSON interfaces](https://restic.readthedocs.io/en/stable/075_scripting.html)
 - [Rclone Google Drive deletion settings](https://rclone.org/drive/#deleting-files)
+- [Restic SFTP configuration](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html#sftp)
+- [OpenSSH client configuration](https://man.openbsd.org/ssh_config.5)
+- [OpenSSH SFTP batch and statvfs capacity commands](https://man.openbsd.org/sftp.1)

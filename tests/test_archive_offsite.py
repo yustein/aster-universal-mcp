@@ -165,3 +165,15 @@ def test_repository_identity_cannot_silently_change(tmp_path, monkeypatch):
     monkeypatch.setattr(value, "restic", lambda *a, **k: json.dumps(second).encode())
     with pytest.raises(ValueError, match="identity changed"):
         value.identity(register=True)
+
+
+def test_legacy_drive_repository_pin_remains_valid_without_rewrite(tmp_path, monkeypatch):
+    value = runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(value, "restic", lambda *a, **k: json.dumps({"id": "1" * 64, "version": 2}).encode())
+    identity = value.identity(register=True)
+    assert identity.pop("repository_type") == "rclone"
+    path = tmp_path / "repository.json"
+    offsite.recovery.save(path, identity)
+    original = path.read_bytes()
+    assert value.identity()["repository_type"] == "rclone"
+    assert path.read_bytes() == original
