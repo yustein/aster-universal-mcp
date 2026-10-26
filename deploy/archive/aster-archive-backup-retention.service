@@ -1,0 +1,20 @@
+[Unit]
+Description=Conservative retention for the qualified Aster archive repository
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /home/tony/aster-conversation-archive/scripts/archive-offsite.py --config /etc/aster-archive-backup/offsite.json retention --apply --prune
+TimeoutStartSec=8h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=50%
+MemoryMax=1G
+TasksMax=96
+PrivateTmp=true
+NoNewPrivileges=true
+

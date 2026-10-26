@@ -1,0 +1,11 @@
+[Unit]
+Description=Weekly Aster archive retention
+
+[Timer]
+OnCalendar=Sun *-*-* 09:00:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+Unit=aster-archive-backup-retention.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,11 @@
+[Unit]
+Description=Monthly complete Aster archive repository integrity check
+
+[Timer]
+OnCalendar=*-*-01 12:00:00 UTC
+RandomizedDelaySec=20min
+Persistent=true
+Unit=aster-archive-backup-integrity.service
+
+[Install]
+WantedBy=timers.target
