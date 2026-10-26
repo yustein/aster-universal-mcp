@@ -46,6 +46,9 @@ From this directory:
 
 ```bash
 umask 077
+# This public script is bind-mounted and read by PostgreSQL UID 999.
+# A clone made under a private umask can otherwise leave it unreadable.
+chmod 644 init-db.sh
 cp .env.example .env
 chmod 600 .env
 mkdir -p private/config
@@ -112,6 +115,11 @@ The `migrate` service creates/upgrades archive and Procrastinate tables before
 other application services start. Initialization scripts run only for a new
 empty PostgreSQL volume. Changing passwords in `.env` does not rotate existing
 database role passwords; perform an explicit coordinated rotation instead.
+The database health check requires both archive roles and the correctly owned
+archive schema, as well as a responding PostgreSQL socket. If initialization
+fails, inspect its logs and repair the specific cause before starting imports;
+an initialized data directory causes PostgreSQL to skip entrypoint scripts on
+the next start. Never wipe an existing volume as an initialization retry.
 
 The PostgreSQL 18 image uses `PGDATA=/var/lib/postgresql/18/docker`, with the
 persistent volume mounted at **`/var/lib/postgresql`**. Do not substitute the
