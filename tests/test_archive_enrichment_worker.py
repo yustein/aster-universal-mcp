@@ -45,12 +45,14 @@ def test_continuous_worker_bounds_batches_and_does_not_log_component_text(tmp_pa
     result=worker.run_worker('knowledge',object(),'owner','source',tmp_path,
                              batch_size=2,poll_seconds=7,stop=stop,emit=events.append)
     assert len(calls)==2 and all(row[-1]==2 for row in calls)
-    assert stop.polls==[7,7] and result['completed']==4
+    assert stop.polls==[0,0] and result['completed']==4
     assert result['status']=='stopped'
     assert 'PRIVATE' not in json.dumps(events) and 'SECRET' not in json.dumps(events)
 
 
-@pytest.mark.parametrize('options',[{'batch_size':0},{'batch_size':True},{'poll_seconds':0},{'poll_seconds':True},{'backlog':True}])
+@pytest.mark.parametrize('options',[{'batch_size':0},{'batch_size':True},{'poll_seconds':0},
+    {'poll_seconds':True},{'work_pause_seconds':-1},{'work_pause_seconds':True},
+    {'work_pause_seconds':3601},{'backlog':True}])
 def test_invalid_worker_settings_cannot_consume_pending_job(tmp_path,monkeypatch,options):
     calls=[]
     monkeypatch.setattr(worker,'derive_pending',lambda *a,**k:calls.append(1))
@@ -106,6 +108,41 @@ def test_transient_errors_are_sanitized_and_wait_before_retry(tmp_path,monkeypat
     assert all(secret not in json.dumps(events) for secret in ('password','PRIVATE','/secret'))
 
 
+def test_productive_work_drains_then_waits_on_idle_and_failures(tmp_path,monkeypatch):
+    batches=iter([{'completed':2,'failed':0},{'completed':1,'failed':0},
+                  {'completed':0,'failed':0},{'completed':0,'failed':1},
+                  {'completed':1,'failed':1}])
+    monkeypatch.setattr(worker,'derive_pending',lambda *a,**k:next(batches))
+    stop=StopAfterPolls(5)
+    result=worker.run_worker('knowledge',object(),'owner','source',tmp_path,
+        batch_size=2,poll_seconds=11,stop=stop,emit=lambda event:None)
+    assert stop.polls==[0,0,11,11,11]
+    assert result['completed']==4 and result['failed']==2 and result['batch_errors']==0
+
+
+def test_operator_pacing_applies_only_to_productive_batches(tmp_path,monkeypatch):
+    batches=iter([{'completed':1,'failed':0},{'completed':0,'failed':0}])
+    monkeypatch.setattr(worker,'process_pending',lambda *a,**k:next(batches))
+    stop=StopAfterPolls(2)
+    result=worker.run_worker('cognee',object(),'owner','source',tmp_path,
+        config=PreparedConfig(),work_pause_seconds=3,poll_seconds=19,
+        stop=stop,emit=lambda event:None)
+    assert stop.polls==[3,19] and result['completed']==1
+
+
+def test_shutdown_after_productive_batch_cannot_claim_another(tmp_path,monkeypatch):
+    stop=threading.Event()
+    calls=[]
+    def complete(*args,**kwargs):
+        calls.append('claimed')
+        stop.set()
+        return {'completed':1,'failed':0}
+    monkeypatch.setattr(worker,'derive_pending',complete)
+    result=worker.run_worker('knowledge',object(),'owner','source',tmp_path,
+        stop=stop,emit=lambda event:None)
+    assert calls==['claimed'] and result['status']=='stopped'
+
+
 def test_sigterm_unwinds_active_batch_and_restores_signal_handler(tmp_path,monkeypatch):
     calls,events=[],[]
     def interrupted(*args,**kwargs):
@@ -150,8 +187,34 @@ def test_cli_backlog_flag_reaches_component_worker(tmp_path,monkeypatch):
         return {'status':'batch_complete'}
     monkeypatch.setattr(worker,'run_worker',run)
     assert worker.main(['cognee','--owner','owner','--source','source','--archive-root',str(tmp_path),
-                        '--once','--enable-backlog'])==0
+                        '--once','--enable-backlog','--work-pause-seconds','2'])==0
     assert calls[0]['backlog'] is True and calls[0]['once'] is True
+    assert calls[0]['work_pause_seconds']==2
+
+
+def test_cli_work_pause_environment_is_cognee_only_and_flag_overrides(tmp_path,monkeypatch):
+    calls=[]
+    monkeypatch.setenv('ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG','0')
+    monkeypatch.setenv('ASTER_ARCHIVE_COGNEE_WORK_PAUSE_SECONDS','7')
+    monkeypatch.setattr(worker,'PostgresArchive',lambda *a:object())
+    monkeypatch.setattr(worker,'run_worker',lambda *a,**k:(calls.append(k) or {'status':'batch_complete'}))
+    arguments=['--owner','owner','--source','source','--archive-root',str(tmp_path),'--once']
+    assert worker.main(['cognee',*arguments])==0
+    assert worker.main(['knowledge',*arguments])==0
+    assert worker.main(['cognee',*arguments,'--work-pause-seconds','2'])==0
+    assert [call['work_pause_seconds'] for call in calls]==[7,0,2]
+
+
+def test_invalid_work_pause_environment_is_sanitized_before_job_call(tmp_path,monkeypatch,capsys):
+    calls=[]
+    monkeypatch.setenv('ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG','0')
+    monkeypatch.setenv('ASTER_ARCHIVE_COGNEE_WORK_PAUSE_SECONDS','PRIVATE invalid value')
+    monkeypatch.setattr(worker,'run_worker',lambda *a,**k:calls.append(1))
+    result=worker.main(['cognee','--owner','owner','--source','source','--archive-root',str(tmp_path)])
+    assert result==1 and calls==[]
+    output=capsys.readouterr()
+    assert 'PRIVATE' not in output.err
+    assert json.loads(output.err)['error_code']=='INVALID_CONFIGURATION_OR_RESULT'
 
 
 DSN=os.environ.get('ASTER_ARCHIVE_TEST_DSN')

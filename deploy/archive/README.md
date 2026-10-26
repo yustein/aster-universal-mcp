@@ -37,12 +37,17 @@ The starting continuous-service limits are:
 | `mcp` | 2 GiB | 1 | Scoped retrieval and one local query encoder |
 | `embedding` | 2 GiB | 2 | Multilingual E5 inference, batch four |
 | `knowledge` | 512 MiB | 0.5 | Extractive summaries and decision candidates |
-| `cognee` | 6 GiB | 2 | Isolated CPU graph sample and explicit backlog |
+| `cognee` | 6 GiB | 2 | Isolated graph sample and explicit backlog; CPU defaults |
 
 Migration and backup jobs each have a temporary 512 MiB limit. Limits are ceilings,
-not reserved memory or measured throughput. The CPU-only model workers avoid a
-CUDA dependency; a detected GPU does not change this configuration. Leave host
-headroom and measure RSS, throughput and disk growth before increasing concurrency.
+not reserved memory or measured throughput. The default model workers run on CPU;
+detecting a GPU never enables CUDA automatically. Cognee has an explicit, separately
+pinned CUDA image and NVIDIA CDI resource profile for hosts that pass a real CUDA
+inference check. The selected profile and resource budgets persist through the main
+Compose file and private `.env`; see [persistent resource selection](../../docs/archive-knowledge.md#persistent-resource-selection).
+The archive reader, database and multilingual embedding worker remain separate.
+Leave host headroom and measure RSS, GPU memory, throughput and disk growth before
+increasing concurrency or resource ceilings.
 The worker processes bounded jobs; a per-source database lock protects imports
 of the same account/workspace from concurrent reconciliation.
 

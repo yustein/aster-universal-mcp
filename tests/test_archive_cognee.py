@@ -182,6 +182,60 @@ def test_missing_models_leave_cognee_outbox_empty(tmp_path):
 
 
 @requires_pg
+def test_exhausted_item_does_not_block_an_already_qualified_backlog(tmp_path):
+    store,scope,root=setup_archive(tmp_path,count=25);c=config(tmp_path)
+    assert process_pending(store,scope.owner_id,'account',root,c,limit=5,processor=synthetic_processor)['completed']==5
+    def fail(*args):raise CogneeUnavailable('synthetic local failure')
+    for _ in range(3):
+        assert process_pending(store,scope.owner_id,'account',root,c,limit=1,backlog=True,processor=fail)['failed']==1
+    # A failed item stays failed and visible; the remaining source progresses.
+    assert process_pending(store,scope.owner_id,'account',root,c,limit=20,backlog=True,processor=synthetic_processor)['completed']>0
+    failures=[item for item in coverage(store,scope)['jobs'] if item['status']=='failed']
+    assert len(failures)==1 and failures[0]['passages']==1
+
+
+@requires_pg
+def test_backlog_seeding_forms_real_same_revision_batches(tmp_path):
+    from aster_archive.ingest import import_path
+    store=PostgresArchive(DSN);store.migrate();KnowledgeStore(store).migrate()
+    owner='cognee-batch-'+uuid.uuid4().hex;source='account'
+    rows=[{'id':'conversation-'+str(i),'title':'Synthetic long conversation','update_time':10+i,
+        'current_node':'u','mapping':{'u':{'parent':None,'children':[],'message':{'id':'u',
+        'author':{'role':'user'},'content':{'content_type':'text',
+        'parts':['Marie Curie worked in Paris. '*4000]}}}}} for i in range(2)]
+    source_file=tmp_path/'export.json';source_file.write_text(json.dumps(rows))
+    root=tmp_path/'archive';import_path(store,source_file,root,owner,source)
+    c=config(tmp_path)
+    assert process_pending(store,owner,source,root,c,limit=5,processor=synthetic_processor)['completed']==5
+    seen=[]
+    def capture(config,row):
+        seen.append(row['revision_id']);return synthetic_processor(config,row)
+    result=process_pending(store,owner,source,root,c,limit=20,backlog=True,processor=capture)
+    assert result['completed']==20 and len(set(seen))==1
+
+
+@requires_pg
+def test_shared_runtime_failures_refund_attempt_and_preserve_passage_retry_budget(tmp_path):
+    from aster_archive.cognee_bridge import CogneeRuntimeUnavailable
+    store,scope,root=setup_archive(tmp_path,count=2);c=config(tmp_path)
+    def passage_failure(*args):raise CogneeUnavailable('synthetic passage failure')
+    def runtime_failure(*args):raise CogneeRuntimeUnavailable('COGNEE_RUNTIME_UNAVAILABLE:CUDA_UNAVAILABLE')
+    assert process_pending(store,scope.owner_id,'account',root,c,limit=1,processor=passage_failure)['failed']==1
+    for _ in range(5):
+        with pytest.raises(CogneeRuntimeUnavailable):
+            process_pending(store,scope.owner_id,'account',root,c,limit=1,processor=runtime_failure)
+    with store.connection(readonly=True) as conn:
+        jobs=conn.execute('''SELECT j.status,j.attempts,j.error_code FROM aster_archive.cognee_jobs j
+            JOIN aster_archive.passages p USING(passage_id)
+            JOIN aster_archive.conversation_revisions r USING(revision_id)
+            WHERE r.owner_id=%s AND j.pipeline_key=%s ORDER BY j.attempts DESC''',(scope.owner_id,PIPELINE_KEY)).fetchall()
+    assert [job['attempts'] for job in jobs]==[1,0]
+    assert all(job['status']=='pending' for job in jobs)
+    assert jobs[0]['error_code']=='local_cognee_runtime_unavailable'
+    assert process_pending(store,scope.owner_id,'account',root,c,limit=2,processor=synthetic_processor)['completed']==2
+
+
+@requires_pg
 @pytest.mark.skipif(not os.environ.get('ASTER_COGNEE_TEST_PYTHON') or not os.environ.get('ASTER_COGNEE_TEST_MODELS'),
     reason='explicit isolated CPU runtime and prepared local models required')
 def test_real_cognee_graph_is_checkpointed_after_database_ack_crash(tmp_path):

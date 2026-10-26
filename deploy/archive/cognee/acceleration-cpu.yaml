@@ -1,0 +1,3 @@
+# Default resource fragment: no GPU access or NVIDIA runtime dependency.
+services:
+  acceleration: {}

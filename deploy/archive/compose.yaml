@@ -6,10 +6,11 @@ x-archive-build: &archive-build
 
 x-cognee-build: &cognee-build
   context: ../..
-  dockerfile: deploy/archive/cognee/Dockerfile
+  dockerfile: ${ASTER_ARCHIVE_COGNEE_DOCKERFILE:-deploy/archive/cognee/Dockerfile}
   # Compose builds the main image first and supplies it without a registry pull.
   args:
     ASTER_ARCHIVE_IMAGE: archive_base
+    ASTER_COGNEE_CPU_IMAGE: ${ASTER_ARCHIVE_COGNEE_CPU_IMAGE:-aster-archive-cognee:local}
   additional_contexts:
     archive_base: service:mcp
 
@@ -185,7 +186,7 @@ services:
       - --model-dir
       - /var/lib/aster-archive-models/e5-small
       - --threads
-      - "2"
+      - "${ASTER_ARCHIVE_EMBEDDING_THREADS:-2}"
       - --batch-size
       - "${ASTER_ARCHIVE_EMBEDDING_BATCH_SIZE:-4}"
       - --poll-seconds
@@ -196,8 +197,8 @@ services:
       HF_HUB_DISABLE_TELEMETRY: "1"
       TOKENIZERS_PARALLELISM: "false"
     networks: [enrichment]
-    mem_limit: 2g
-    cpus: 2.0
+    mem_limit: ${ASTER_ARCHIVE_EMBEDDING_MEMORY_LIMIT:-2g}
+    cpus: ${ASTER_ARCHIVE_EMBEDDING_CPUS:-2.0}
     stop_grace_period: 120s
     volumes:
       - archive_objects:/var/lib/aster-archive:ro
@@ -234,7 +235,10 @@ services:
 
   cognee:
     <<: *archive-service
-    image: aster-archive-cognee:local
+    extends:
+      file: ${ASTER_ARCHIVE_COGNEE_ACCELERATION_FILE:-cognee/acceleration-cpu.yaml}
+      service: acceleration
+    image: ${ASTER_ARCHIVE_COGNEE_IMAGE:-aster-archive-cognee:local}
     build: *cognee-build
     command:
       - python
@@ -248,7 +252,7 @@ services:
       - --archive-root
       - /var/lib/aster-archive
       - --batch-size
-      - "2"
+      - "${ASTER_ARCHIVE_COGNEE_BATCH_SIZE:-2}"
       - --poll-seconds
       - "60"
     environment:
@@ -256,9 +260,16 @@ services:
       ASTER_ARCHIVE_COGNEE_ROOT: /var/lib/aster-archive/cognee
       ASTER_ARCHIVE_COGNEE_MODEL_ROOT: /var/lib/aster-archive-models/cognee
       ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG: "${ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG:-0}"
+      ASTER_ARCHIVE_COGNEE_WORK_PAUSE_SECONDS: "${ASTER_ARCHIVE_COGNEE_WORK_PAUSE_SECONDS:-0}"
+      ASTER_ARCHIVE_COGNEE_CPU_THREADS: "${ASTER_ARCHIVE_COGNEE_CPU_THREADS:-2}"
+      ASTER_ARCHIVE_COGNEE_INFERENCE_BATCH_SIZE: "${ASTER_ARCHIVE_COGNEE_INFERENCE_BATCH_SIZE:-1}"
+      ASTER_ARCHIVE_COGNEE_MEMORY_BYTES: "${ASTER_ARCHIVE_COGNEE_MEMORY_BYTES:-6442450944}"
+      ASTER_ARCHIVE_COGNEE_DEVICE: "${ASTER_ARCHIVE_COGNEE_DEVICE:-cpu}"
+      ASTER_ARCHIVE_COGNEE_GPU_MEMORY_FRACTION: "${ASTER_ARCHIVE_COGNEE_GPU_MEMORY_FRACTION:-0.9}"
+      ASTER_ARCHIVE_COGNEE_TIMEOUT_SECONDS: "${ASTER_ARCHIVE_COGNEE_TIMEOUT_SECONDS:-900}"
     networks: [enrichment]
-    mem_limit: 6g
-    cpus: 2.0
+    mem_limit: ${ASTER_ARCHIVE_COGNEE_MEMORY_LIMIT:-6g}
+    cpus: ${ASTER_ARCHIVE_COGNEE_CPUS:-2.0}
     pids_limit: 256
     stop_grace_period: 120s
     volumes:
@@ -284,7 +295,7 @@ services:
 
   prepare-cognee:
     <<: *archive-service
-    image: aster-archive-cognee:local
+    image: ${ASTER_ARCHIVE_COGNEE_IMAGE:-aster-archive-cognee:local}
     build: *cognee-build
     profiles: [maintenance]
     restart: "no"
