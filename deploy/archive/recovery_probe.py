@@ -1,0 +1,209 @@
+"""Private, metadata-only recovery evidence, run in the existing archive image.
+
+No server is started. Database access always uses the service's reader DSN.
+The extract mode runs only in a separate container with new disposable volumes.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import sqlite3
+import sys
+import tarfile
+import uuid
+
+
+def file_hash(path):
+    with Path(path).open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+def extract_stream(max_bytes, base=Path("/restore")):
+    roots = {name: base / name for name in ("archive", "auth", "config")}
+    if not all(root.is_dir() and not any(root.iterdir()) for root in roots.values()):
+        raise ValueError("restore volumes must be empty")
+    total, seen, files = 0, set(), 0
+    with tarfile.open(fileobj=sys.stdin.buffer, mode="r|gz") as archive:
+        for member in archive:
+            path = PurePosixPath(member.name)
+            if (path.is_absolute() or "\\" in member.name or ".." in path.parts
+                    or not path.parts or path.parts[0] not in roots
+                    or not (member.isdir() or member.isfile())):
+                raise ValueError("unsupported backup member")
+            name = path.as_posix()
+            if name in seen:
+                raise ValueError("duplicate backup member")
+            seen.add(name)
+            if len(seen) > 100_000:
+                raise ValueError("too many backup members")
+            if path.parts[0] != "archive" and name not in (
+                    "auth", "config", "auth/oauth.sqlite3", "config/clients.json"):
+                raise ValueError("unsupported private-state member")
+            destination = base / path
+            if member.isdir():
+                destination.mkdir(mode=0o700, parents=True, exist_ok=True)
+            else:
+                total += member.size
+                if member.size < 0 or total > max_bytes:
+                    raise ValueError("restore byte budget exceeded")
+                if shutil.disk_usage(roots[path.parts[0]]).free < member.size + 10 * 1024**3:
+                    raise ValueError("restore storage reserve reached")
+                destination.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+                source = archive.extractfile(member)
+                if source is None:
+                    raise ValueError("missing backup member stream")
+                with source, destination.open("xb") as output:
+                    shutil.copyfileobj(source, output, length=1024 * 1024)
+                if destination.stat().st_size != member.size:
+                    raise ValueError("truncated backup member")
+                destination.chmod(0o600 if member.mode & 0o200 else 0o400)
+                files += 1
+    for root in roots.values():
+        for directory, children, names in os.walk(root, followlinks=False):
+            for name in children + names:
+                os.chown(Path(directory) / name, 10001, 10001, follow_symlinks=False)
+            os.chown(directory, 10001, 10001, follow_symlinks=False)
+    if not (roots["auth"] / "oauth.sqlite3").is_file() or not (roots["config"] / "clients.json").is_file():
+        raise ValueError("missing private-state members")
+    return {"files": files, "bytes": total, "separate_volumes": True}
+
+
+def probe(args, expected=None):
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from aster_archive.access import ArchiveScope, load_grants
+    from aster_archive.store import ArchiveNotFound, PostgresArchive
+
+    dsn = os.environ["ASTER_ARCHIVE_DATABASE_URL"]
+    if args.database:
+        if not re.fullmatch(r"aster_archive_restore_[a-z0-9_]{1,40}", args.database):
+            raise ValueError("database override is limited to disposable restore targets")
+        values = conninfo_to_dict(dsn)
+        values["dbname"] = args.database
+        dsn = make_conninfo(**values)
+    store = PostgresArchive(dsn)
+    with store.connection(readonly=True) as db:
+        role = db.execute("""SELECT current_user AS role,
+            current_setting('default_transaction_read_only') AS default_read_only,
+            current_setting('transaction_read_only') AS transaction_read_only,
+            pg_database_size(current_database()) AS database_bytes""").fetchone()
+    assert role["role"] == "aster_archive_read"
+    assert role["default_read_only"] == role["transaction_read_only"] == "on"
+    receipt = store.import_report(args.import_id)
+    assert (receipt["owner_id"], receipt["source_id"]) == (args.owner, args.source)
+    assert receipt["status"] == "complete" and receipt["error_code"] is None
+    assert receipt["finished_at"] is not None and receipt["records"].get("invalid", 0) == 0
+    assert sum(receipt["records"].values()) > 0
+    scope = ArchiveScope("local-recovery-check", args.owner, (args.source,), None)
+    counts = store.coverage(scope)
+    coverage = {key: counts[key] for key in (
+        "conversations", "revisions", "exact_passages", "ambiguous_current_revisions",
+        "earliest_source_creation", "latest_source_update", "complete_account_history_verified")}
+    assert coverage["conversations"] > 0 and coverage["exact_passages"] > 0
+    hits = store.search(scope, args.query, limit=3)["results"]
+    assert 1 <= len(hits) <= 3
+    selected = expected["passage"]["id"] if expected else hits[0]["id"]
+    passage = store.fetch(scope, selected)
+
+    def checked_metadata(item):
+        meta, text = item["metadata"], item["text"]
+        assert meta["source_id"] == args.source
+        assert 0 <= meta["start_char"] <= meta["end_char"]
+        assert len(text) == meta["end_char"] - meta["start_char"] <= 2000
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest() == meta["text_sha256"]
+        return {"id": item["id"], **{key: meta[key] for key in (
+            "revision_id", "node_id", "part_index", "start_char", "end_char", "text_sha256")}}
+
+    selected_meta = checked_metadata(passage)
+    assert passage["metadata"]["is_current_revision"] is True
+    with store.connection(readonly=True) as db:
+        raw = db.execute("""WITH selected AS (
+            SELECT p.start_char,p.end_char,
+                CASE WHEN jsonb_typeof(n.raw->'message'->'content'->'parts')='array'
+                    THEN (n.raw->'message'->'content'->'parts')->p.part_index
+                    WHEN p.part_index=0
+                         AND jsonb_typeof(n.raw->'message'->'content'->'text')='string'
+                    THEN n.raw->'message'->'content'->'text' END AS raw_part
+            FROM aster_archive.passages p
+            JOIN aster_archive.nodes n USING(revision_id,node_id)
+            JOIN aster_archive.conversation_revisions r USING(revision_id)
+            JOIN aster_archive.conversations c USING(owner_id,source_id,conversation_id)
+            WHERE p.passage_id=%s AND c.owner_id=%s AND c.source_id=%s
+                AND c.tombstoned_at IS NULL AND c.current_revision=p.revision_id)
+            SELECT jsonb_typeof(raw_part) AS kind,
+                char_length(raw_part #>> '{}') AS part_chars,
+                substr(raw_part #>> '{}',start_char+1,end_char-start_char) AS source_slice
+            FROM selected""", (selected, args.owner, args.source)).fetchone()
+    assert raw and raw["kind"] == "string"
+    assert selected_meta["end_char"] <= raw["part_chars"] and raw["source_slice"] == passage["text"]
+    context = store.context(scope, selected, limit=3)
+    assert 1 <= len(context["passages"]) <= 3
+    assert context["revision_id"] == selected_meta["revision_id"]
+    context_items = [checked_metadata(item) for item in context["passages"]]
+    assert all(item["revision_id"] == selected_meta["revision_id"] for item in context_items)
+    denied = ArchiveScope("local-recovery-denied", "denied-" + uuid.uuid4().hex, (args.source,), None)
+    try:
+        store.fetch(denied, selected)
+    except ArchiveNotFound:
+        pass
+    else:
+        raise AssertionError("cross-owner fetch allowed")
+    clients = Path(os.environ["ASTER_ARCHIVE_CLIENTS"])
+    grants = load_grants(clients)
+    result = {
+        "version": 1, "owner": args.owner, "source": args.source, "import_id": args.import_id,
+        "coverage": coverage, "records": receipt["records"],
+        "archive_sha256": receipt["archive_sha256"], "archive_bytes": receipt["size_bytes"],
+        "search_ids": [item["id"] for item in hits], "passage": selected_meta,
+        "context": {"passages": context_items, "ancestry_status": context["ancestry_status"],
+                    "has_more": bool(context["next_cursor"])},
+        "acl_sha256": file_hash(clients), "acl_client_count": len(grants),
+        "reader_role": role["role"], "reader_default_read_only": True,
+        "passage_hash_and_source_offsets_valid": True, "cross_owner_denied": True,
+    }
+    if expected is not None:
+        assert result == {key: expected[key] for key in result}, "restored metadata differs"
+    result["database_bytes"] = role["database_bytes"]
+    if args.database:
+        digest = receipt["archive_sha256"]
+        assert re.fullmatch(r"[0-9a-f]{64}", digest)
+        original = Path(os.environ["ASTER_ARCHIVE_ROOT"]) / "objects" / "sha256" / digest[:2] / digest
+        assert original.is_file() and not original.is_symlink()
+        assert original.stat().st_size == receipt["size_bytes"] and file_hash(original) == digest
+        auth = Path(os.environ["ASTER_ARCHIVE_OAUTH_DB"]).resolve(strict=True)
+        with sqlite3.connect(auth.as_uri() + "?mode=ro&immutable=1", uri=True) as db:
+            assert db.execute("PRAGMA quick_check").fetchone()[0] == "ok"
+        result.update(original_archive_hash_valid=True, restored_auth_valid=True, restored_acl_valid=True)
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("mode", choices=("capture", "verify", "extract"))
+    parser.add_argument("--owner", default="owner-personal")
+    parser.add_argument("--source", default="chatgpt-personal")
+    parser.add_argument("--import-id")
+    parser.add_argument("--query", default="ChatGPT")
+    parser.add_argument("--database")
+    parser.add_argument("--max-bytes", type=int)
+    args = parser.parse_args()
+    if args.mode == "extract":
+        assert args.max_bytes is not None and args.max_bytes > 0
+        result = extract_stream(args.max_bytes)
+    else:
+        assert args.import_id is not None
+        expected = json.load(sys.stdin) if args.mode == "verify" else None
+        result = probe(args, expected)
+    print(json.dumps({"result": "pass", **result}, sort_keys=True), flush=True)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except Exception as exc:
+        print(json.dumps({"result": "fail", "error_type": type(exc).__name__}), flush=True)
+        raise SystemExit(1)
