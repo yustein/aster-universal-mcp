@@ -36,6 +36,25 @@ def test_processing_environment_does_not_inherit_cloud_or_archive_credentials(tm
     assert env['GLINER_AUTO_INSTALL']=='false'
 
 
+def test_runtime_metadata_caches_are_scoped_and_separate_from_immutable_models(tmp_path,monkeypatch):
+    monkeypatch.setenv('FASTEMBED_CACHE_PATH','/unrelated/shared/cache')
+    monkeypatch.setenv('HF_HOME','/unrelated/shared/hf')
+    c=config(tmp_path)
+    first=c.root/'revisions'/'owner-source-revision-a'
+    second=c.root/'revisions'/'owner-source-revision-b'
+    one=child_environment(c,first)
+    two=child_environment(c,second)
+    for name in ('FASTEMBED_CACHE_PATH','HF_HOME','XDG_CACHE_HOME'):
+        assert Path(one[name]).is_relative_to(first)
+        assert Path(two[name]).is_relative_to(second)
+        assert not Path(one[name]).is_relative_to(c.model_root)
+        assert one[name]!=two[name]
+    assert one['ASTER_COGNEE_MODEL_ROOT']==str(c.model_root)
+    assert one['ASTER_COGNEE_OFFLINE']=='1' and one['HF_HUB_OFFLINE']=='1'
+    assert one['TRANSFORMERS_OFFLINE']=='1'
+    assert not (c.model_root/'fastembed').exists()
+
+
 def test_changed_cognee_env_file_is_not_loaded(tmp_path):
     c=config(tmp_path);root=c.root/'scope';child_environment(c,root)
     (root/'local-only.env').write_text('LLM_API_KEY=synthetic-secret\n')
@@ -188,3 +207,77 @@ def test_real_cognee_graph_is_checkpointed_after_database_ack_crash(tmp_path):
             WHERE r.owner_id=%s AND j.pipeline_key=%s''',(scope.owner_id,PIPELINE_KEY)).fetchone()
     assert row['status']=='complete' and row['attempts']==2
     assert row['receipt']['chunks']>=1 and row['receipt']['manifest_sha256']
+
+
+def _has_container_user():
+    try:
+        import pwd
+        pwd.getpwuid(10001)
+        return True
+    except (ImportError,KeyError):
+        return False
+
+
+@pytest.mark.skipif(not sys.platform.startswith('linux') or getattr(os,'geteuid',lambda:-1)()!=0
+    or not _has_container_user()
+    or not os.environ.get('ASTER_COGNEE_TEST_PYTHON') or not os.environ.get('ASTER_COGNEE_TEST_MODELS'),
+    reason='explicit CPU runtime and a real UID10001 passwd entry are required for this isolation test')
+def test_real_cognee_uid10001_uses_immutable_models_and_writable_scoped_cache():
+    """Exercise real libraries as the container UID, with fresh unwritable weights.
+
+    Copy only prepared snapshots/manifest, excluding caches from earlier pilots.
+    This tests Unix permissions; the native Compose read-only mount still needs
+    its first bounded production pilot before native qualification is claimed.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    repo=Path(__file__).resolve().parents[1]
+    original=Path(os.environ['ASTER_COGNEE_TEST_MODELS'])
+    with tempfile.TemporaryDirectory(prefix='aster-cognee-immutable-') as directory:
+        root=Path(directory);root.chmod(0o755)
+        # Model the installed package's public read permissions without
+        # changing a developer checkout whose files may have a private umask.
+        package_root=root/'app';package_root.mkdir(mode=0o755)
+        shutil.copytree(repo/'aster_archive',package_root/'aster_archive',
+                        ignore=shutil.ignore_patterns('__pycache__'))
+        for path in package_root.rglob('*'):
+            path.chmod(0o755 if path.is_dir() else 0o644)
+        models=root/'models';models.mkdir()
+        shutil.copytree(original/'downloads',models/'downloads',symlinks=True)
+        shutil.copyfile(original/'manifest.json',models/'manifest.json')
+        for path in models.rglob('*'):
+            if not path.is_symlink():path.chmod(0o555 if path.is_dir() else 0o444)
+        models.chmod(0o555)
+        runtime=root/'runtime';runtime.mkdir(mode=0o700);os.chown(runtime,10001,10001)
+        code='''
+import json,os,sys
+from pathlib import Path
+from aster_archive.cognee_bridge import CogneeConfig,process_passage
+models=Path(sys.argv[2]);runtime=Path(sys.argv[3])
+assert os.geteuid()==10001 and not os.access(models,os.W_OK)
+try:
+    (models/'forbidden-cache').mkdir()
+except PermissionError:
+    pass
+else:
+    raise AssertionError('model directory is writable')
+c=CogneeConfig(Path(sys.argv[1]),runtime/'graph',models)
+result=process_passage(c,{'owner_id':'synthetic-owner','source_id':'synthetic-source',
+    'revision_id':'b'*64,'passage_id':'a'*64,'role':'user',
+    'text':'Marie Curie was born in Warsaw. She worked at the University of Paris.'})
+caches=list((runtime/'graph'/'revisions').glob('*/cache/fastembed'))
+assert len(caches)==1 and caches[0].is_dir()
+assert not (models/'fastembed').exists() and not (models/'huggingface').exists()
+print(json.dumps({'status':result['status'],'chunks':result['chunks'],
+    'summaries':len(result['summaries']),'uid':os.geteuid(),'scoped_cache':True}))
+'''
+        def as_container_user():
+            os.setgroups([]);os.setgid(10001);os.setuid(10001)
+        result=subprocess.run([sys.executable,'-c',code,os.environ['ASTER_COGNEE_TEST_PYTHON'],str(models),str(runtime)],
+            cwd=runtime,env={'PATH':'/usr/bin:/bin','LANG':'C.UTF-8','PYTHONPATH':str(package_root)},
+            capture_output=True,text=True,timeout=120,preexec_fn=as_container_user)
+        assert result.returncode==0,result.stderr[-2000:]
+        value=json.loads(result.stdout)
+        assert value['status']=='complete' and value['chunks']>=1 and value['summaries']>=1
+        assert value['uid']==10001 and value['scoped_cache'] is True

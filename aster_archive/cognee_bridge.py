@@ -104,8 +104,12 @@ def child_environment(config: CogneeConfig, root: Path, *, offline=True) -> dict
         'ALLOW_HTTP_REQUESTS':'false','CONTRADICTION_DETECTION':'false',
         'EMBEDDING_PROVIDER':'fastembed','EMBEDDING_MODEL':EMBEDDING_MODEL,
         'EMBEDDING_DIMENSIONS':'384','EMBEDDING_MAX_COMPLETION_TOKENS':'256',
-        'EMBEDDING_BATCH_SIZE':'1','FASTEMBED_CACHE_PATH':str(config.model_root / 'fastembed'),
-        'HF_HOME':str(config.model_root / 'huggingface'),'TOKENIZERS_PARALLELISM':'false',
+        # FastEmbed creates its cache directory even when specific_model_path
+        # points at an existing immutable snapshot. Keep library metadata in
+        # this owner/source/revision runtime, never in the read-only weights.
+        'EMBEDDING_BATCH_SIZE':'1','FASTEMBED_CACHE_PATH':str(root / 'cache' / 'fastembed'),
+        'HF_HOME':str(root / 'cache' / 'huggingface'),
+        'XDG_CACHE_HOME':str(root / 'cache'),'TOKENIZERS_PARALLELISM':'false',
         'OMP_NUM_THREADS':str(config.cpu_threads),'MKL_NUM_THREADS':str(config.cpu_threads),
         'OPENBLAS_NUM_THREADS':str(config.cpu_threads),'RAYON_NUM_THREADS':str(config.cpu_threads),
         'KUZU_NUM_THREADS':str(config.cpu_threads),'KUZU_BUFFER_POOL_SIZE':str(256*1024**2),
