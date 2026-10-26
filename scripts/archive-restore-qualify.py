@@ -27,6 +27,33 @@ DEPLOY = REPO / "deploy/archive"
 PROBE = DEPLOY / "recovery_probe.py"
 COMPOSE = ["docker", "compose", "--project-directory", str(DEPLOY),
            "--env-file", str(DEPLOY / ".env"), "-f", str(DEPLOY / "compose.yaml")]
+EXTENSION_DDL = {
+    "vector": b"CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;",
+    "plpgsql": b"CREATE EXTENSION IF NOT EXISTS plpgsql WITH SCHEMA pg_catalog;",
+}
+
+
+def prepare_restore_list(contents):
+    """Keep ordinary metadata; handle only allowlisted extensions as admin.
+
+    Both CREATE EXTENSION and its COMMENT must be omitted from the ingest-role
+    restore. Precreating an admin-owned extension alone does not permit the
+    ingest role to execute COMMENT ON EXTENSION.
+    """
+    extensions, lines = set(), []
+    for line in contents.splitlines(keepends=True):
+        item = re.match(r"^\d+;\s+\d+\s+\d+\s+(.*)$", line)
+        description = item[1] if item else ""
+        prefix = next((value for value in ("EXTENSION - ", "COMMENT - EXTENSION ")
+                       if description.startswith(value)), None)
+        if prefix is None:
+            lines.append(line)
+            continue
+        name = description[len(prefix):].split()[0]
+        if name not in EXTENSION_DDL:
+            raise ValueError("backup contains an unsupported privileged extension")
+        extensions.add(name)
+    return "".join(lines), sorted(extensions)
 
 
 def save(path, data):
@@ -163,6 +190,12 @@ def main():
                     state["backup_manifest_sha256"] = hashlib.file_digest(manifest_stream, "sha256").hexdigest()
                 save(state_path, state)
                 probe_code = PROBE.read_text()
+                with (backup / "database.dump").open("rb") as source:
+                    listing = command(COMPOSE + ["exec", "-T", "db", "pg_restore", "--list"],
+                                      log=log, source=source, capture=True).decode()
+                restore_list, extensions = prepare_restore_list(listing)
+                (work / "restore.list").write_text(restore_list)
+                state["admin_extensions"] = extensions
                 probe_args = ["--owner", args.owner, "--source", args.source,
                               "--import-id", args.import_id, "--query", args.query]
                 baseline_raw = command(COMPOSE + ["run", "--rm", "--no-deps", "-T", "mcp", "python", "-c",
@@ -192,9 +225,23 @@ def main():
                 state["stage"] = "restoring_database"
                 save(state_path, state)
                 print(json.dumps({"stage": state["stage"], "checkpoint": str(state_path)}), flush=True)
-                with (backup / "database.dump").open("rb") as source:
-                    command(COMPOSE + ["exec", "-T", "db", "pg_restore", "-U", "postgres", "--dbname=" + database,
-                                      "--exit-on-error", "--no-owner", "--no-acl", "--role=aster_archive_ingest"], log=log, source=source)
+                for extension in extensions:
+                    command(COMPOSE + ["exec", "-T", "db", "psql", "-U", "postgres", "-d", database,
+                                      "-v", "ON_ERROR_STOP=1"], log=log, text=EXTENSION_DDL[extension], timeout=60)
+                container_list = "/tmp/aster-archive-restore-" + token + ".list"
+                list_created = False
+                try:
+                    command(COMPOSE + ["exec", "-T", "db", "sh", "-c",
+                                      'set -eC; umask 077; cat > "$1"', "sh", container_list],
+                            log=log, text=restore_list.encode(), timeout=60)
+                    list_created = True
+                    with (backup / "database.dump").open("rb") as source:
+                        command(COMPOSE + ["exec", "-T", "db", "pg_restore", "-U", "postgres", "--dbname=" + database,
+                                          "--exit-on-error", "--no-owner", "--no-acl", "--role=aster_archive_ingest",
+                                          "--use-list=" + container_list], log=log, source=source)
+                finally:
+                    if list_created:
+                        command(COMPOSE + ["exec", "-T", "db", "rm", "-f", "--", container_list], log=log, timeout=60)
                 command(COMPOSE + ["exec", "-T", "db", "psql", "-U", "postgres", "-d", database, "-v", "ON_ERROR_STOP=1"],
                         log=log, text=b"GRANT USAGE ON SCHEMA aster_archive TO aster_archive_read; GRANT SELECT ON ALL TABLES IN SCHEMA aster_archive TO aster_archive_read;")
                 state["stage"] = "restoring_files"

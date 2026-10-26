@@ -26,7 +26,7 @@ archive_finish() {
 trap archive_finish EXIT
 
 archive_running=$("${archive_compose[@]}" ps --services --status running)
-for archive_service in watch worker; do
+for archive_service in watch worker embedding knowledge cognee; do
     if [[ $'\n'"$archive_running"$'\n' == *$'\n'"$archive_service"$'\n'* ]]; then
         archive_resume+=("$archive_service")
     fi

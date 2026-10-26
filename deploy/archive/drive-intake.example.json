@@ -1,0 +1,12 @@
+{
+  "expected_hostname": "REPLACE_WITH_VERIFIED_NATIVE_HOSTNAME",
+  "drive_remote": "REPLACE_WITH_CONFIGURED_REMOTE",
+  "drive_root_folder_id": "REPLACE_WITH_PRIVATE_EXPORT_FOLDER_ID",
+  "inbox_dir": "/srv/aster-archive/inbox",
+  "staging_dir": "/srv/aster-archive/drive-intake-staging",
+  "state_dir": "/srv/aster-archive/drive-intake-state",
+  "max_listing_entries": 500,
+  "max_files_per_run": 2,
+  "max_file_bytes": 8589934592,
+  "baseline": []
+}

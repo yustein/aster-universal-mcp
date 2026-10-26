@@ -73,6 +73,103 @@ def extract_stream(max_bytes, base=Path("/restore")):
     return {"files": files, "bytes": total, "separate_volumes": True}
 
 
+def enrichment_probe(store, scope, args):
+    """Bounded read-only evidence; optional indexes may still be filling."""
+    from aster_archive.access import ArchiveScope
+    from aster_archive.store import ArchiveNotFound, _scope_sql
+
+    result = {}
+    denied = ArchiveScope("local-recovery-denied", "denied-" + uuid.uuid4().hex, (args.source,), None)
+
+    def checked_passage(passage_id):
+        passage = store.fetch(scope, passage_id)
+        metadata, text = passage["metadata"], passage["text"]
+        assert metadata["source_id"] == args.source and metadata["is_current_revision"] is True
+        assert 0 <= metadata["start_char"] <= metadata["end_char"]
+        assert len(text) == metadata["end_char"] - metadata["start_char"] <= 2000
+        assert hashlib.sha256(text.encode("utf-8")).hexdigest() == metadata["text_sha256"]
+        return passage
+
+    if getattr(args, "check_embedding", False):
+        from aster_archive.embedding_store import EmbeddingStore
+        from aster_archive.embeddings import LocalE5Encoder
+
+        model = Path(os.environ.get("ASTER_ARCHIVE_EMBEDDING_MODEL_DIR",
+                                    "/var/lib/aster-archive-models/e5-small"))
+        encoder = LocalE5Encoder(model, threads=1, batch_size=1)
+        index = EmbeddingStore(store)
+        coverage = index.coverage(scope, encoder.generation_id)
+        assert coverage["embedded_passages"] > 0
+        query = args.query.strip().strip('"').strip() or "conversation"
+        found = index.search(scope, query, encoder=encoder, mode="semantic", limit=3)
+        assert found["mode"] == "semantic" and 1 <= len(found["results"]) <= 3
+        checked_passage(found["results"][0]["id"])
+        assert index.search(denied, query, encoder=encoder, mode="semantic", limit=1)["results"] == []
+        result["embedding"] = {key: coverage[key] for key in (
+            "generation_id", "current_passages", "embedded_passages", "unique_texts",
+            "embedded_unique_texts", "failed_unique_texts")}
+        result["embedding"].update(semantic_results=len(found["results"]),
+                                   passage_hash_valid=True, cross_owner_denied=True)
+
+    if getattr(args, "check_knowledge", False):
+        from aster_archive.knowledge import KnowledgeStore, PIPELINE_KEY
+
+        knowledge = KnowledgeStore(store)
+        coverage = knowledge.coverage(scope)
+        records = sum(row["records"] for row in coverage["records"] if row["pipeline_key"] == PIPELINE_KEY)
+        jobs = [row for row in coverage["jobs"] if row["pipeline_key"] == PIPELINE_KEY]
+        completed = sum(row["revisions"] for row in jobs if row["status"] == "complete")
+        failed = sum(row["revisions"] for row in jobs if row["status"] == "failed")
+        assert records > 0 and completed > 0 and coverage["verified_decisions"] == 0
+        where, parameters = _scope_sql(scope)
+        with store.connection(readonly=True) as db:
+            selected = db.execute(f"""SELECT k.record_id
+                FROM aster_archive.knowledge_records k
+                JOIN aster_archive.conversation_revisions r USING(revision_id)
+                JOIN aster_archive.conversations c USING(owner_id,source_id,conversation_id)
+                WHERE {where} AND c.current_revision=k.revision_id
+                    AND k.pipeline_key=%s AND k.kind='summary' AND jsonb_array_length(k.citations)>0
+                ORDER BY k.record_id LIMIT 1""", parameters + [PIPELINE_KEY]).fetchone()
+        assert selected is not None
+        record = knowledge.fetch(scope, selected["record_id"])
+        metadata = record["metadata"]
+        assert metadata["source_id"] == args.source and metadata["is_current_revision"] is True
+        assert metadata["verified_decision"] is False and metadata["content_is_historical_evidence"] is True
+        citation = record["citations"][0]
+        passage = checked_passage(citation["passage_id"])
+        start = citation["start_char"] - passage["metadata"]["start_char"]
+        end = citation["end_char"] - passage["metadata"]["start_char"]
+        assert 0 <= start < end <= len(passage["text"])
+        assert passage["text"][start:end] == citation["exact_quote"]
+        token = re.search(r"[^\W\d_]{4,}", record["text"], re.UNICODE)
+        assert token is not None
+        found = knowledge.search(scope, token.group(0), kind="summary", limit=3)["results"]
+        assert 1 <= len(found) <= 3
+        try:
+            knowledge.fetch(denied, record["id"])
+        except ArchiveNotFound:
+            pass
+        else:
+            raise AssertionError("cross-owner knowledge fetch allowed")
+        result["knowledge"] = {"pipeline_key": PIPELINE_KEY, "records": records,
+                               "completed_revisions": completed, "failed_revisions": failed,
+                               "search_results": len(found), "exact_citation_valid": True,
+                               "passage_hash_valid": True, "cross_owner_denied": True}
+
+    if getattr(args, "check_cognee", False):
+        from aster_archive.cognee_bridge import coverage
+
+        report = coverage(store, scope)
+        completed = sum(row["passages"] for row in report["jobs"] if row["status"] == "complete")
+        failed = sum(row["passages"] for row in report["jobs"] if row["status"] == "failed")
+        summaries = sum(row["summaries"] for row in report["jobs"] if row["status"] == "complete")
+        assert completed > 0 and report["graph_is_not_authoritative"] is True
+        result["cognee"] = {"pipeline_key": report["pipeline_key"], "completed_passages": completed,
+                            "failed_passages": failed, "derived_summaries": summaries,
+                            "graph_is_not_authoritative": True}
+    return result
+
+
 def probe(args, expected=None):
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
     from aster_archive.access import ArchiveScope, load_grants
@@ -167,6 +264,8 @@ def probe(args, expected=None):
     }
     if expected is not None:
         assert result == {key: expected[key] for key in result}, "restored metadata differs"
+    if any(getattr(args, "check_" + name, False) for name in ("embedding", "knowledge", "cognee")):
+        result["enrichment"] = enrichment_probe(store, scope, args)
     result["database_bytes"] = role["database_bytes"]
     if args.database:
         digest = receipt["archive_sha256"]
@@ -190,6 +289,9 @@ def main():
     parser.add_argument("--query", default="ChatGPT")
     parser.add_argument("--database")
     parser.add_argument("--max-bytes", type=int)
+    parser.add_argument("--check-embedding", action="store_true")
+    parser.add_argument("--check-knowledge", action="store_true")
+    parser.add_argument("--check-cognee", action="store_true")
     args = parser.parse_args()
     if args.mode == "extract":
         assert args.max_bytes is not None and args.max_bytes > 0

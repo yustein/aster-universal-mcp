@@ -47,15 +47,36 @@ def main(argv=None) -> int:
     dsn = os.environ.get("ASTER_ARCHIVE_DATABASE_URL", "")
     try:
         store = PostgresArchive(dsn)
+        flag = os.environ.get("ASTER_ARCHIVE_ENABLE_ENRICHMENT", "0")
+        if flag not in {"0", "1"}:
+            raise ValueError("archive enrichment flag must be 0 or 1")
         if args.command == "migrate":
             from .queue import migrate_queue
             store.migrate()
             migrate_queue(dsn)
             result = {"status": "schemas_ready"}
+            if flag == "1":
+                from .embedding_store import EmbeddingStore
+                from .knowledge import KnowledgeStore
+                # The database operator installs pgvector separately. The
+                # ingest role applies additive, checksummed component schemas.
+                EmbeddingStore(store).migrate()
+                KnowledgeStore(store).migrate()
+                result["enrichment"] = "schemas_ready"
         elif args.command == "import":
             result = import_path(store, args.path, args.archive_root, args.owner, args.source)
         elif args.command == "status":
             result = store.status(args.owner, args.source)
+            if flag == "1":
+                from .access import ArchiveScope
+                from .embedding_store import EmbeddingStore
+                from .knowledge import KnowledgeStore
+                from .cognee_bridge import coverage as cognee_coverage
+
+                scope = ArchiveScope("local-operator", args.owner, (args.source,), None)
+                result["embeddings"] = EmbeddingStore(store).coverage(scope)
+                result["knowledge_extraction"] = KnowledgeStore(store).coverage(scope)
+                result["cognee"] = cognee_coverage(store, scope)
         elif args.command == "tombstone":
             store.tombstone(args.owner, args.source, args.conversation_id)
             result = {"status": "tombstoned", "raw_originals_retained": True}

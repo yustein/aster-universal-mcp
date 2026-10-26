@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import os
 from pathlib import Path
+import threading
 
 from .access import ArchiveAccessError, load_grants, scope_for_client
 from .tools import ArchiveReader, ArchiveRequestError, ArchiveRateLimitError, register_archive_tools, validate_origin
@@ -16,8 +17,75 @@ _PRIVATE_HEADERS = {
     "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'",
 }
 
+_ENCODER_LOCK = threading.Lock()
+_ENCODER = None
+_ENCODER_PATH = None
 
-def create_app(*, backend=None, environment=None):
+
+def _local_encoder(model_dir: str):
+    """At most one verified model instance per reader process; never downloads."""
+    from .embeddings import LocalE5Encoder
+
+    global _ENCODER, _ENCODER_PATH
+    path = Path(model_dir)
+    if not path.is_absolute() or path.is_symlink():
+        raise ValueError("absolute regular local model directory required")
+    key = str(path.resolve(strict=True))
+    with _ENCODER_LOCK:
+        if _ENCODER is not None:
+            if _ENCODER_PATH != key:
+                raise ValueError("restart the reader to change its model directory")
+            return _ENCODER
+        encoder = LocalE5Encoder(path, threads=2, batch_size=4)
+        _ENCODER, _ENCODER_PATH = encoder, key
+        return encoder
+
+
+def _archive_onboarding(record, grants_path):
+    """Show this client's fresh archive grant without creating or changing it."""
+    client_id = record["client_id"]
+    try:
+        scope = load_grants(grants_path).get(client_id)
+    except ArchiveAccessError:
+        status = "authorization_state_unavailable"
+        heading = "Archive permission could not be checked"
+        detail = ("Ask the archive operator to inspect its protected client grants. "
+                  "Access stays unavailable until the configuration can be verified.")
+    else:
+        if scope is None:
+            status = "approval_required"
+            heading = "Archive read permission required"
+            detail = ("OAuth pairing identifies this client. The archive operator must "
+                      "add this exact client ID to the protected archive client grants "
+                      "with the intended owner, sources and projects before it can read conversations.")
+        elif scope.source_ids == () or scope.project_ids == ():
+            status = "empty_scope"
+            heading = "Archive scope grants no conversation data"
+            detail = ("This client has a grant with an empty source or project scope. "
+                      "Ask the archive operator to confirm the intended access.")
+        else:
+            status = "approved"
+            heading = "Archive read permission granted"
+            detail = ("Reads are restricted to this client's configured owner, sources and projects. "
+                      "Verify coverage and an exact cited passage after completing the connection.")
+    return (
+        "<section aria-labelledby='archive-approval' data-archive-status='" + status + "'>"
+        "<h2 id='archive-approval'>" + heading + "</h2><p>" + detail + "</p>"
+        "<p>Finish the OAuth connection and return to your client promptly. "
+        "The local archive grant can be completed afterwards.</p>"
+        "<dl><dt>Client ID</dt><dd><code>" + html.escape(client_id) + "</code></dd>"
+        "<dt>Callback</dt><dd><code>" + html.escape(record["redirect_uri"]) + "</code></dd></dl>"
+        "<p>This service provides read-only conversation search, exact passages, context and "
+        "cited knowledge. The existing <code>system:admin</code> OAuth scope is the protocol's "
+        "compatibility label; the protected archive grant determines conversation access.</p>"
+        "<p>After the grant is confirmed, call <code>archive_coverage</code>, then "
+        "<code>search</code> and <code>fetch</code> for a known passage. "
+        "Check its source and citation before relying on the archive.</p></section>"
+    )
+
+
+def create_app(*, backend=None, environment=None, embedding_backend=None,
+               encoder=None, knowledge_backend=None, cognee_coverage=None):
     from anyio import to_thread
     from mcp.server.transport_security import TransportSecuritySettings
     from starlette.requests import Request
@@ -37,7 +105,35 @@ def create_app(*, backend=None, environment=None):
     if backend is None:
         from .store import PostgresArchive
         backend = PostgresArchive(env["ASTER_ARCHIVE_DATABASE_URL"])
-    reader = ArchiveReader(backend, origin=origin, grants_path=grants_path)
+    flag = env.get("ASTER_ARCHIVE_ENABLE_ENRICHMENT", "0")
+    if flag not in {"0", "1"}:
+        raise ValueError("archive enrichment flag must be 0 or 1")
+    model_dir = env.get("ASTER_ARCHIVE_EMBEDDING_MODEL_DIR")
+    enabled = (flag == "1" or bool(model_dir) or embedding_backend is not None
+               or knowledge_backend is not None or encoder is not None)
+    embedding_status = "ready" if encoder is not None else "not_configured"
+    if enabled:
+        from .embedding_store import EmbeddingStore
+        from .knowledge import KnowledgeStore
+        from .cognee_bridge import coverage as local_cognee_coverage
+
+        embedding_backend = embedding_backend if embedding_backend is not None else EmbeddingStore(backend)
+        knowledge_backend = knowledge_backend if knowledge_backend is not None else KnowledgeStore(backend)
+        if cognee_coverage is None:
+            cognee_coverage = lambda scope: local_cognee_coverage(backend, scope)
+        if encoder is None and model_dir:
+            try:
+                encoder = _local_encoder(model_dir)
+                embedding_status = "ready"
+            except Exception:
+                # Canonical reads remain available during local model repair.
+                # The response/coverage explicitly disclose this degraded state.
+                # No request tries another model, downloads, or runs migrations.
+                embedding_status = "model_unavailable"
+    reader = ArchiveReader(backend, origin=origin, grants_path=grants_path,
+                           embeddings=embedding_backend, encoder=encoder,
+                           knowledge=knowledge_backend, cognee_coverage=cognee_coverage,
+                           embedding_status=embedding_status)
     provider = LocalOAuthProvider(db_path, issuer=origin, resource=origin + "/mcp")
 
     def response_error(error, status):
@@ -94,7 +190,11 @@ def create_app(*, backend=None, environment=None):
             "/archive/passages/{passage_id}", methods=["GET"], include_in_schema=False,
         )(passage)
 
-    server = build_oauth_server(db_path=db_path, origin=origin, register_tools=register)
+    server = build_oauth_server(
+        db_path=db_path, origin=origin, register_tools=register,
+        onboarding=lambda record: _archive_onboarding(record, grants_path),
+        server_name="Aster Conversation Archive",
+    )
     app = server.streamable_http_app(
         stateless_http=True, json_response=True, host="127.0.0.1",
         transport_security=TransportSecuritySettings(

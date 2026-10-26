@@ -1,32 +1,48 @@
 # Conversation archive deployment
 
-This package starts a separate PostgreSQL 18.6 archive, import watcher, durable
-job worker, and authenticated read-only MCP service. It does not modify Aster PA,
-the Coordinator's database, existing host-execution MCP services, DNS, or tunnels.
+This package starts a separate PostgreSQL 18.6 archive with pgvector 0.8.7,
+an import watcher, durable import and enrichment workers, and an authenticated
+read-only MCP service. It does not modify Aster PA, the Coordinator's database,
+existing host-execution MCP services, DNS, or tunnels.
 Native bootstrap, durable synthetic import, exact/scoped retrieval, ordinary
 container restart, backup and an isolated reader-role restore have been checked
 on Lenomila; see [the dated verification record](../../docs/ARCHIVE_ACCEPTANCE.md).
-Public MCP access, host reboot and offsite recovery remain separate gates.
+That record concerns the canonical archive. The enrichment images, public MCP
+access, host reboot and offsite recovery need their own deployment verification.
 The application can also be tested against a local PostgreSQL instance.
 The image pins Python **3.12.14** and installs the checked-in
 `requirements-archive-lock.txt` before installing the application without
-dependency resolution. The Dockerfile-specific ignore file excludes private
-configuration and export data from the build context.
+dependency resolution. The enrichment extra pins ONNX Runtime 1.23.2,
+tokenizers 0.22.1 and NumPy 2.3.4. Cognee has its own locked CPU environment;
+its dependencies never replace the MCP interpreter's packages. Dockerfile-specific
+ignore files exclude private configuration and export data from build contexts.
 
 ## Host qualification
 
 The initial deployment targets Lenomila's native Ubuntu host with Docker Engine
-and Compose v2. Keep PostgreSQL and archive volumes on its Linux filesystem.
+and Compose v2.17 or newer. Named build contexts let the Cognee image reuse the
+locally built archive image. Keep PostgreSQL and archive volumes on its Linux filesystem.
 Before enabling the services, verify the actual host identity, startup and shutdown behavior,
 available RAM and disk, sustained disk writes, existing workload headroom, and
-the chosen bridge subnet. Do not infer Lenomila's capacity from Amsterdam's PA
+both chosen bridge subnets. Do not infer Lenomila's capacity from Amsterdam's PA
 host. Qualify the host's sleep and reboot settings for continuous operation.
 
-The starting container caps are 1 GiB/1 CPU for PostgreSQL, 1 GiB/1 CPU for the
-worker, 256 MiB/0.25 CPU for the watcher, and 512 MiB/0.5 CPU for MCP. Migration
-and backup jobs each have a temporary 512 MiB limit. These are initial operating
-limits, not measured throughput or a hardware recommendation. Leave additional
-host/VM headroom and measure the largest conversation before increasing workers.
+The starting continuous-service limits are:
+
+| Service | Memory cap | CPU cap | Purpose |
+| --- | ---: | ---: | --- |
+| `db` | 1 GiB | 1 | Canonical records, durable jobs, vectors and derivations |
+| `watch` | 256 MiB | 0.25 | Finalized export discovery |
+| `worker` | 1 GiB | 1 | Streaming canonical imports |
+| `mcp` | 2 GiB | 1 | Scoped retrieval and one local query encoder |
+| `embedding` | 2 GiB | 2 | Multilingual E5 inference, batch four |
+| `knowledge` | 512 MiB | 0.5 | Extractive summaries and decision candidates |
+| `cognee` | 6 GiB | 2 | Isolated CPU graph sample and explicit backlog |
+
+Migration and backup jobs each have a temporary 512 MiB limit. Limits are ceilings,
+not reserved memory or measured throughput. The CPU-only model workers avoid a
+CUDA dependency; a detected GPU does not change this configuration. Leave host
+headroom and measure RSS, throughput and disk growth before increasing concurrency.
 The worker processes bounded jobs; a per-source database lock protects imports
 of the same account/workspace from concurrent reconciliation.
 
@@ -38,7 +54,9 @@ again. Low space produces a retryable I/O failure and preserves committed
 checkpoints; it does not quarantine the export as malformed. The setting is a
 positive byte count, bounded at 1 PiB. Checks measure the filesystem backing the
 archive/CAS root, so a PostgreSQL volume on a different filesystem needs separate
-capacity monitoring. These checks provide headroom, not a quota against other
+capacity monitoring. Enrichment checks the same reserve before durable work;
+public model preparation also checks its model-volume filesystem. These checks
+provide headroom, not a quota against other
 host processes; verify free space and resolve low-space receipts before retrying.
 Malformed reserve configuration fails worker, dispatch and watcher startup before
 pending imports can be misclassified as invalid source data.
@@ -100,22 +118,47 @@ with the host's routes and other Docker networks. Adjust all three network and
 proxy settings together if needed. Unverified proxy settings should fail closed.
 This package does not establish public connectivity by itself.
 
+The additional `enrichment` bridge defaults to `172.30.79.0/24` / `172.30.79.1`
+and is internal. Verify it is unused before deployment. PostgreSQL joins both
+bridges; `embedding`, `knowledge` and `cognee` join only the internal bridge.
+The MCP service stays on the original `archive` bridge, preserving its verified
+proxy peer. The public-artifact preparation services use the ordinary archive
+bridge, but have no database DSN, conversation volume, ACL or OAuth mount.
+
 ## Start and check
 
-From this directory, after configuration and host qualification:
+From this directory, after configuration and host qualification, prepare the
+images and public model assets explicitly. This sequence is for a **new empty
+database**; use the following upgrade section for an existing archive.
 
 ```bash
 docker compose config --quiet
-docker compose up -d --build
+docker compose build db mcp cognee
+docker compose --profile maintenance run --rm --no-deps prepare-e5
+docker compose --profile maintenance run --rm --no-deps prepare-cognee
+docker compose up -d
 docker compose ps
-docker compose logs --tail 100 migrate watch worker mcp
+docker compose logs --tail 100 migrate watch worker mcp embedding knowledge cognee
 ```
+
+`prepare-e5` downloads only the pinned multilingual E5 ONNX model and tokenizer.
+`prepare-cognee` downloads only its separately pinned public GLiNER and English
+embedding assets. Both verify the release-pinned hashes. They share the separate
+`archive_models` named volume and receive no historical conversations or database
+credentials. Runtime containers mount the model volume read-only; workers and
+MCP never download a model during a query or import. The Cognee preparation
+profile uses a temporary private directory for its small request and response.
 
 The one-time PostgreSQL initialization creates a non-superuser ingest role and
 a separate reader role. The reader has SELECT access to the `aster_archive`
 schema and defaults to read-only transactions; it has no queue-table privileges.
 The `migrate` service creates/upgrades archive and Procrastinate tables before
-other application services start. Initialization scripts run only for a new
+other application services start. With `ASTER_ARCHIVE_ENABLE_ENRICHMENT=1`, it
+also applies separately checksummed embedding and knowledge migrations; it
+does not alter the canonical v1 migration or create the PostgreSQL extension.
+The derived database image installs pgvector at commit
+`f37c13f68b57d2c3472b2214fbcff699d6d34876` with portable `OPTFLAGS=''` and enables
+the extension during fresh initialization. Initialization scripts run only for a new
 empty PostgreSQL volume. Changing passwords in `.env` does not rotate existing
 database role passwords; perform an explicit coordinated rotation instead.
 The initializer applies role, schema and grant changes in one transaction. The
@@ -131,6 +174,39 @@ persistent volume mounted at **`/var/lib/postgresql`**. Do not substitute the
 older `/var/lib/postgresql/data` mount. Do not run `docker compose down -v` on an
 archive you intend to retain.
 
+### Add enrichment to an existing archive
+
+Take and verify a backup first. Build the three images and prepare the two model
+sets with the commands above while the existing canonical service remains intact.
+Stop the archive writers and reader for the database image change, retaining
+the existing named volumes:
+
+```bash
+docker compose stop watch worker embedding knowledge cognee mcp
+docker compose up -d --no-deps db
+docker compose ps db
+```
+
+Wait for the database to report healthy. Its existing volume skips initialization
+scripts, so use the authorized local PostgreSQL operator to install the extension
+and then run the application migration:
+
+```bash
+docker compose exec -T db psql -U postgres -d aster_archive \
+  --set ON_ERROR_STOP=1 --command 'CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;'
+docker compose run --rm --no-deps migrate
+docker compose up -d watch worker mcp embedding knowledge cognee
+```
+
+Keep both the Compose project name and `archive_database:/var/lib/postgresql`
+mount unchanged. No data-directory conversion or `down -v` is part of this upgrade.
+The ingest role remains a non-superuser; only the local operator installs the
+extension. Verify a synthetic semantic query, exact fetch and scope denial before
+opening new retrieval access. If a model is absent or fails verification, canonical
+lexical retrieval remains available and reports its enrichment fallback.
+
+### Inspect status
+
 Use the CLI's status command with the same owner and source identifiers used in
 `.env`:
 
@@ -142,6 +218,32 @@ docker compose exec worker python -m aster_archive status \
 Inspect import states, record counts, error codes, and coverage. An idle process
 or a healthy PostgreSQL socket does not prove that an export was fully imported.
 This release does not include an HTTP health endpoint or an external monitor.
+
+### Enrichment receipts and Cognee expansion
+
+The `embedding` worker deduplicates exact passage content within an owner and
+model generation before CPU inference. It resumes durable jobs and covers long
+text using bounded token windows. PostgreSQL initially computes exact cosine
+similarity over the authorized current passages; no approximate vector index is
+assumed. `knowledge` derives cited extractive summaries and unverified decision
+candidates from current revisions, preserving older history separately.
+
+Cognee initially processes **five passages** and then remains alive and idle. Its
+graph and private replay receipts live under `archive_objects/cognee`; the main
+database records scoped citations, job states and measured processing evidence.
+Inspect the five completed records and their exact canonical citations. Once the
+sample has at least five completions and zero failures, explicitly set
+`ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG=1` in the private `.env` and recreate only
+that worker:
+
+```bash
+docker compose up -d --force-recreate cognee
+```
+
+The worker does not expand from sample to backlog by itself. Invalid toggle values
+fail startup. Cognee's English embedding pilot is a separate derivative and does
+not replace multilingual E5 retrieval. See [embedding design and limits](../../docs/archive-embeddings.md)
+and [knowledge/Cognee provenance](../../docs/archive-knowledge.md).
 
 ## Deliver the requested export and later exports
 
@@ -242,7 +344,7 @@ constraints. An owner-wide entry is:
 }
 ```
 
-Use explicit source/project ID lists for scoped worker access. Empty `clients`
+Use explicit source/project ID lists for scoped reader access. Empty `clients`
 denies everyone; a missing client or an unclassified project does not acquire
 scope by inference. Do not modify the machine executor's administrator allowlist
 to enable archive access. Recreate the `mcp` service after changing its ACL so
@@ -254,6 +356,15 @@ then confirm an unauthorized source/client is denied. Canonical passage URLs
 require the same authorization; a normal browser click without a bearer token
 currently returns 401. No anonymous conversation transcript is published.
 
+Canonical `search`, `fetch` and `archive_context` remain compatible. With a verified
+query model, `search` combines lexical and semantic results and reports partial
+embedding coverage; a completely quoted query retains literal exact-match
+semantics. `archive_search` offers explicit lexical, semantic or hybrid modes.
+`archive_knowledge_search`, `archive_knowledge_fetch` and `archive_decision_history`
+expose labeled derivatives with bounded canonical passage citations.
+`archive_coverage` reports actual component states and unfinished work. Every
+read reapplies the authenticated client owner/source/project scope and tombstones.
+
 ## Back up and qualify restoration
 
 Run the repository's helper from an authorized local operator terminal:
@@ -262,10 +373,14 @@ Run the repository's helper from an authorized local operator terminal:
 ../../scripts/archive-backup.sh /srv/aster-archive-backups
 ```
 
-The helper briefly stops only archive `watch`/`worker` services that were running,
+The helper briefly stops archive `watch`, `worker`, `embedding`, `knowledge` and
+`cognee` services that were running,
 takes a consistent PostgreSQL custom-format dump, snapshots the live OAuth SQLite
 database using SQLite's backup API, copies original archive objects and the client
 ACL, records the private deployment environment, and computes SHA256 checksums.
+The archive object tree includes Cognee graph state and replay receipts. Public
+reproducible assets in `archive_models` are prepared again from the pinned manifest
+when restoring, rather than treated as conversation data.
 It then restarts only the archive services it stopped. The MCP reader can remain
 running. Do not run other archive import/purge/configuration commands concurrently
 with this backup. Partial output remains private if a step fails; a directory
@@ -279,7 +394,8 @@ by this package. Never back up a running PostgreSQL data directory with ordinary
 file copying.
 
 Restore qualification requires a **separate isolated environment**: verify the
-checksums; initialize the matching database roles; restore `database.dump` with
+checksums; initialize the matching database roles and install the pinned pgvector
+extension as a local database operator; restore `database.dump` with
 `pg_restore --no-owner --no-acl --role=aster_archive_ingest` into an empty archive
 database; restore archive objects, auth snapshot, and client ACL with UID 10001
 ownership and private modes; then check counts, exact passages, repeat import,
@@ -290,10 +406,13 @@ archive to test a backup.
 
 ## Present scope and remaining qualification
 
-Phase one imports and preserves exported conversations and enables lexical
-retrieval. Embedding generation, pgvector indexes, OCR/transcription, knowledge
-claims, and optional Cognee enrichment are later stages with separate receipts
-and resource budgets. There are no paid model calls in this deployment.
+The canonical archive preserves exported conversations, branches and revisions.
+The enrichment workers add multilingual embeddings, scoped hybrid retrieval,
+cited extractive summaries, decision candidates and an isolated Cognee graph
+pilot with separate durable receipts. Derived claims remain distinguishable
+from the exact original passages. OCR/transcription and broader semantic graph
+quality work remain separate features. There are no paid model calls in this
+deployment, and runtime processing does not transfer the corpus to a model API.
 
 Before reporting Lenomila operational, verify: the actual Linux runtime and
 resources; finalized export receipt; successful parsing and coverage; repeat
@@ -303,5 +422,7 @@ independent offsite copy. These are deployment checks, not reasons to delay loca
 development while the requested export is being prepared.
 
 References: [PostgreSQL image storage and initialization](https://github.com/docker-library/docs/blob/master/postgres/README.md),
+[pgvector 0.8.7 source](https://github.com/pgvector/pgvector/tree/f37c13f68b57d2c3472b2214fbcff699d6d34876),
+[Compose named build contexts](https://docs.docker.com/reference/compose-file/build/#additional_contexts),
 [PostgreSQL logical backups](https://www.postgresql.org/docs/current/backup-dump.html),
 [Docker restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).

@@ -65,6 +65,21 @@ def test_commands_without_input_get_devnull(monkeypatch):
     assert observed["stdin"] == subprocess.DEVNULL
 
 
+def test_restore_list_removes_only_privileged_extension_entries():
+    ordinary = "4; 1259 17001 TABLE public synthetic aster_archive_ingest\n5; 0 0 COMMENT public TABLE synthetic aster_archive_ingest\n"
+    source = ("; Archive TOC\n2; 3079 17000 EXTENSION - vector \n"
+              "3; 0 0 COMMENT - EXTENSION vector \n" + ordinary)
+    filtered, extensions = restore.prepare_restore_list(source)
+    assert extensions == ["vector"]
+    assert filtered == "; Archive TOC\n" + ordinary
+    assert b"vector WITH SCHEMA public" in restore.EXTENSION_DDL["vector"]
+
+
+def test_restore_list_refuses_unreviewed_admin_extension():
+    with pytest.raises(ValueError, match="unsupported privileged extension"):
+        restore.prepare_restore_list("2; 3079 17000 EXTENSION - unreviewed_extension \n")
+
+
 def make_backup(path):
     entries = {}
     for name in ("database.dump", "files.tar.gz", "deployment.env"):

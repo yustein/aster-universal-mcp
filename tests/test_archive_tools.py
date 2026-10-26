@@ -101,7 +101,10 @@ def registered(tmp_path):
 def test_tool_shapes_annotations_and_exact_fetch(registered):
     server, store, reader, acl = registered
     tools = asyncio.run(server.list_tools())
-    assert {tool.name for tool in tools} == {"search", "fetch", "archive_context", "archive_coverage"}
+    assert {tool.name for tool in tools} == {
+        "search", "fetch", "archive_context", "archive_coverage", "archive_search",
+        "archive_knowledge_search", "archive_knowledge_fetch", "archive_decision_history",
+    }
     for tool in tools:
         assert tool.annotations.read_only_hint is True
         assert tool.annotations.destructive_hint is False
@@ -125,6 +128,10 @@ def test_tool_shapes_annotations_and_exact_fetch(registered):
 @pytest.mark.parametrize("method,arguments", [
     ("search", {"query": "Aster"}), ("fetch", {"id": PID}),
     ("archive_context", {"id": PID}), ("archive_coverage", {}),
+    ("archive_search", {"query": "Aster", "mode": "semantic"}),
+    ("archive_knowledge_search", {"query": "Aster"}),
+    ("archive_knowledge_fetch", {"id": PID}),
+    ("archive_decision_history", {"conversation_id": "conversation"}),
 ])
 def test_unauthorized_calls_do_not_touch_backend(registered, method, arguments):
     server, store, reader, acl = registered

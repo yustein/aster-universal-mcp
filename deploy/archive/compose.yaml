@@ -4,6 +4,15 @@ x-archive-build: &archive-build
   context: ../..
   dockerfile: deploy/archive/Dockerfile
 
+x-cognee-build: &cognee-build
+  context: ../..
+  dockerfile: deploy/archive/cognee/Dockerfile
+  # Compose builds the main image first and supplies it without a registry pull.
+  args:
+    ASTER_ARCHIVE_IMAGE: archive_base
+  additional_contexts:
+    archive_base: service:mcp
+
 x-archive-service: &archive-service
   image: aster-conversation-archive:local
   build: *archive-build
@@ -25,10 +34,14 @@ x-writer-environment: &writer-environment
   ASTER_ARCHIVE_DATABASE_URL: "postgresql://aster_archive_ingest:${ASTER_ARCHIVE_INGEST_PASSWORD:?Set a random hexadecimal ingest password}@db:5432/aster_archive"
   ASTER_ARCHIVE_ROOT: /var/lib/aster-archive
   ASTER_ARCHIVE_MIN_FREE_BYTES: "${ASTER_ARCHIVE_MIN_FREE_BYTES:-10737418240}"
+  ASTER_ARCHIVE_ENABLE_ENRICHMENT: "${ASTER_ARCHIVE_ENABLE_ENRICHMENT:-1}"
 
 services:
   db:
-    image: postgres:18.6-bookworm
+    image: aster-archive-postgres:18.6-pgvector0.8.7
+    build:
+      context: ../..
+      dockerfile: deploy/archive/postgres/Dockerfile
     restart: unless-stopped
     shm_size: 128mb
     mem_limit: 1g
@@ -61,7 +74,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 30s
-    networks: [archive]
+    networks: [archive, enrichment]
     logging:
       driver: local
       options: {max-size: 10m, max-file: "3"}
@@ -136,13 +149,18 @@ services:
       ASTER_ARCHIVE_PORT: "8770"
       ASTER_ARCHIVE_BIND_HOST: 0.0.0.0
       ASTER_ARCHIVE_TRUSTED_PROXY_HOST: ${ASTER_ARCHIVE_TRUSTED_PROXY_HOST:?Set the verified reverse-proxy peer IP}
-    mem_limit: 512m
-    cpus: 0.5
+      ASTER_ARCHIVE_ENABLE_ENRICHMENT: "${ASTER_ARCHIVE_ENABLE_ENRICHMENT:-1}"
+      ASTER_ARCHIVE_EMBEDDING_MODEL_DIR: "${ASTER_ARCHIVE_EMBEDDING_MODEL_DIR-/var/lib/aster-archive-models/e5-small}"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    mem_limit: 2g
+    cpus: 1.0
     stop_grace_period: 30s
     ports:
       - "127.0.0.1:${ASTER_ARCHIVE_HTTP_PORT:-8770}:8770"
     volumes:
       - archive_auth:/var/lib/aster-archive-auth
+      - archive_models:/var/lib/aster-archive-models:ro
       - type: bind
         source: ./private/config
         target: /etc/aster-archive
@@ -150,6 +168,136 @@ services:
         bind: {create_host_path: false}
     depends_on:
       migrate: {condition: service_completed_successfully}
+
+  embedding:
+    <<: *archive-service
+    command:
+      - python
+      - -m
+      - aster_archive.embedding_worker
+      - run
+      - --owner
+      - ${ASTER_ARCHIVE_OWNER:?Set the stable archive owner ID}
+      - --source
+      - ${ASTER_ARCHIVE_SOURCE:?Set the stable account/workspace source ID}
+      - --archive-root
+      - /var/lib/aster-archive
+      - --model-dir
+      - /var/lib/aster-archive-models/e5-small
+      - --threads
+      - "2"
+      - --batch-size
+      - "${ASTER_ARCHIVE_EMBEDDING_BATCH_SIZE:-4}"
+      - --poll-seconds
+      - "60"
+    environment:
+      <<: *writer-environment
+      HF_HUB_OFFLINE: "1"
+      HF_HUB_DISABLE_TELEMETRY: "1"
+      TOKENIZERS_PARALLELISM: "false"
+    networks: [enrichment]
+    mem_limit: 2g
+    cpus: 2.0
+    stop_grace_period: 120s
+    volumes:
+      - archive_objects:/var/lib/aster-archive:ro
+      - archive_models:/var/lib/aster-archive-models:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  knowledge:
+    <<: *archive-service
+    command:
+      - python
+      - -m
+      - aster_archive.enrichment_worker
+      - knowledge
+      - --owner
+      - ${ASTER_ARCHIVE_OWNER:?Set the stable archive owner ID}
+      - --source
+      - ${ASTER_ARCHIVE_SOURCE:?Set the stable account/workspace source ID}
+      - --archive-root
+      - /var/lib/aster-archive
+      - --batch-size
+      - "10"
+      - --poll-seconds
+      - "60"
+    environment: *writer-environment
+    networks: [enrichment]
+    mem_limit: 512m
+    cpus: 0.5
+    stop_grace_period: 120s
+    volumes:
+      - archive_objects:/var/lib/aster-archive:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  cognee:
+    <<: *archive-service
+    image: aster-archive-cognee:local
+    build: *cognee-build
+    command:
+      - python
+      - -m
+      - aster_archive.enrichment_worker
+      - cognee
+      - --owner
+      - ${ASTER_ARCHIVE_OWNER:?Set the stable archive owner ID}
+      - --source
+      - ${ASTER_ARCHIVE_SOURCE:?Set the stable account/workspace source ID}
+      - --archive-root
+      - /var/lib/aster-archive
+      - --batch-size
+      - "2"
+      - --poll-seconds
+      - "60"
+    environment:
+      <<: *writer-environment
+      ASTER_ARCHIVE_COGNEE_ROOT: /var/lib/aster-archive/cognee
+      ASTER_ARCHIVE_COGNEE_MODEL_ROOT: /var/lib/aster-archive-models/cognee
+      ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG: "${ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG:-0}"
+    networks: [enrichment]
+    mem_limit: 6g
+    cpus: 2.0
+    pids_limit: 256
+    stop_grace_period: 120s
+    volumes:
+      - archive_objects:/var/lib/aster-archive
+      - archive_models:/var/lib/aster-archive-models:ro
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+
+  # Explicit public-artifact preparation only. These services have network
+  # access and the model volume, but no database DSN, corpus, ACL or OAuth state.
+  prepare-e5:
+    <<: *archive-service
+    profiles: [maintenance]
+    restart: "no"
+    command: ["python", "-m", "aster_archive.embedding_worker", "prepare-model",
+              "--model-dir", "/var/lib/aster-archive-models/e5-small"]
+    environment:
+      ASTER_ARCHIVE_MIN_FREE_BYTES: "${ASTER_ARCHIVE_MIN_FREE_BYTES:-10737418240}"
+    mem_limit: 512m
+    cpus: 0.5
+    volumes:
+      - archive_models:/var/lib/aster-archive-models
+
+  prepare-cognee:
+    <<: *archive-service
+    image: aster-archive-cognee:local
+    build: *cognee-build
+    profiles: [maintenance]
+    restart: "no"
+    command: ["python", "-m", "aster_archive.cognee_bridge", "prepare"]
+    environment:
+      ASTER_ARCHIVE_MIN_FREE_BYTES: "${ASTER_ARCHIVE_MIN_FREE_BYTES:-10737418240}"
+      ASTER_ARCHIVE_COGNEE_ROOT: /tmp/cognee-preparation
+      ASTER_ARCHIVE_COGNEE_MODEL_ROOT: /var/lib/aster-archive-models/cognee
+    mem_limit: 6g
+    cpus: 2.0
+    pids_limit: 256
+    volumes:
+      - archive_models:/var/lib/aster-archive-models
 
   backup:
     <<: *archive-service
@@ -200,6 +348,7 @@ volumes:
   archive_database:
   archive_objects:
   archive_auth:
+  archive_models:
 
 networks:
   archive:
@@ -208,3 +357,10 @@ networks:
       config:
         - subnet: ${ASTER_ARCHIVE_NETWORK_SUBNET:-172.30.77.0/24}
           gateway: ${ASTER_ARCHIVE_NETWORK_GATEWAY:-172.30.77.1}
+  enrichment:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: ${ASTER_ARCHIVE_ENRICHMENT_NETWORK_SUBNET:-172.30.79.0/24}
+          gateway: ${ASTER_ARCHIVE_ENRICHMENT_NETWORK_GATEWAY:-172.30.79.1}

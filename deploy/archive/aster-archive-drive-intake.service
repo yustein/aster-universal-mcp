@@ -1,0 +1,28 @@
+[Unit]
+Description=Read-only private Drive export intake into Aster archive inbox
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /home/tony/aster-conversation-archive/scripts/archive-drive-intake.py --config /etc/aster-archive-backup/drive-intake.json
+TimeoutStartSec=125min
+TimeoutStopSec=15s
+KillMode=control-group
+Nice=15
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=50%
+MemoryMax=512M
+TasksMax=32
+LimitFSIZE=21G
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/etc/aster-archive-backup /srv/aster-archive/inbox /srv/aster-archive/drive-intake-staging /srv/aster-archive/drive-intake-state
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6

@@ -1,0 +1,19 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "aster-archive": {
+      "type": "streamable-http",
+      "url": "https://archive.27.fyi/mcp",
+      "extensions": {
+        "com.openai": {
+          "auth": {
+            "type": "oauth",
+            "client": {"mode": "dcr"},
+            "baseScopes": ["system:admin"],
+            "defaultScopes": ["system:admin"]
+          }
+        }
+      }
+    }
+  }
+}

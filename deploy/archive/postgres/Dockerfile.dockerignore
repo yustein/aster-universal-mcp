@@ -1,0 +1,7 @@
+**
+!deploy/
+!deploy/archive/
+!deploy/archive/postgres/
+!deploy/archive/postgres/20-vector.sql
+.git/**
+deploy/archive/private/**
