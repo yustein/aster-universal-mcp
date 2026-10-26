@@ -1,0 +1,18 @@
+{
+  "expected_hostname": "tony-Legion-Y540-15IRH",
+  "repository_type": "sftp",
+  "repository": "sftp:aster-archive-backup:/repository",
+  "ssh_config": "/etc/aster-archive-backup/ssh_config",
+  "ssh_known_hosts": "/etc/aster-archive-backup/known_hosts",
+  "ssh_identity_file": "/etc/aster-archive-backup/id_ed25519",
+  "password_file": "/etc/aster-archive-backup/restic-password",
+  "restic_program": "/usr/bin/restic",
+  "backup_dir": "/home/tony/aster-archive-backups",
+  "state_dir": "/var/lib/aster-archive-backup-sftp",
+  "host": "lenomila-aster-archive",
+  "key_escrow": {
+    "verified": false,
+    "password_sha256": "REPLACE_WITH_SHA256_OF_EXACT_PASSWORD_FILE",
+    "reference": "REPLACE_WITH_PRIVATE_CHATGPT_RECOVERY_KEY_FILE_REFERENCE"
+  }
+}

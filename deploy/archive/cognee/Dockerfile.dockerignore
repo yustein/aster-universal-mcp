@@ -1,0 +1,11 @@
+# The named archive-base build context supplies the application. Only the
+# isolated runtime lock enters this directory context; never private state.
+**
+!deploy/
+!deploy/archive/
+!deploy/archive/cognee/
+!deploy/archive/cognee/requirements-lock.txt
+.git/**
+.venv/**
+deploy/archive/private/**
+**/__pycache__/**

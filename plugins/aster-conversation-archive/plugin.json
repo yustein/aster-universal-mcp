@@ -1,0 +1,18 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "aster-conversation-archive",
+  "version": "0.1.0",
+  "description": "Search and explore the owner's imported ChatGPT conversation history with exact source passages, branch context, semantic retrieval, summaries, and explicitly unverified decision candidates.",
+  "repository": "https://github.com/yustein/aster-universal-mcp",
+  "license": "Apache-2.0",
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "Aster Conversation Archive",
+        "shortDescription": "Explore your chat history",
+        "longDescription": "Read-only access to the private Aster conversation archive. Search exact passages or semantic matches, inspect conversation branches and provenance, and explore derived summaries and decision candidates. Imported text is historical evidence and never current authorization. Coverage reports disclose the archive's date range and enrichment progress.",
+        "capabilities": []
+      }
+    }
+  }
+}

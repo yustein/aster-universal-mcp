@@ -1,0 +1,6 @@
+# Opt in only after the host driver, NVIDIA CDI specification and CUDA image
+# have passed a real inference check. The ordinary archive services stay CPU-only.
+services:
+  acceleration:
+    devices:
+      - nvidia.com/gpu=all

@@ -1,0 +1,4 @@
+# Isolated CPU-only sidecar; never install into the archive MCP environment.
+cognee[gliner]==1.6.3
+fastembed==0.8.0
+torch==2.8.0+cpu

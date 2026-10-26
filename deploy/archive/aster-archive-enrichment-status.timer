@@ -1,0 +1,12 @@
+[Unit]
+Description=Check Aster archive enrichment progress every fifteen minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=15min
+AccuracySec=30s
+Unit=aster-archive-enrichment-status.service
+
+[Install]
+WantedBy=timers.target
+

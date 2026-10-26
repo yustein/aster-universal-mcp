@@ -1,0 +1,32 @@
+# Optional CUDA runtime. Build the ordinary CPU Cognee image first; it stays
+# available as a fallback and supplies the already pinned non-CUDA packages.
+ARG ASTER_COGNEE_CPU_IMAGE=aster-archive-cognee:local
+ARG ASTER_ARCHIVE_IMAGE=aster-conversation-archive:local
+FROM ${ASTER_COGNEE_CPU_IMAGE} AS cognee-cuda-build
+USER root
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 PIP_NO_CACHE_DIR=1 UV_NO_CACHE=1
+COPY deploy/archive/cognee/requirements-cuda-lock.txt /tmp/requirements-cuda-lock.txt
+RUN /opt/cognee-venv/bin/python -m venv /tmp/cuda-installer \
+    && /tmp/cuda-installer/bin/python -m pip install uv==0.13.4 \
+    && /tmp/cuda-installer/bin/uv pip install --python /opt/cognee-venv/bin/python \
+        --torch-backend cu126 -r /tmp/requirements-cuda-lock.txt \
+    && /tmp/cuda-installer/bin/uv pip check --python /opt/cognee-venv/bin/python \
+    && rm -rf /tmp/cuda-installer /tmp/requirements-cuda-lock.txt
+
+# Both archive variants use the same pinned Python/OS base. Keep the large
+# CUDA environment in its existing image layers and replace only the much
+# smaller main interpreter and application with the selected archive build.
+FROM ${ASTER_ARCHIVE_IMAGE} AS archive-code
+FROM cognee-cuda-build
+USER root
+RUN rm -rf /opt/venv /app
+COPY --from=archive-code /opt/venv /opt/venv
+COPY --from=archive-code --chown=10001:10001 /app /app
+WORKDIR /app
+ENV ASTER_ARCHIVE_COGNEE_PYTHON=/opt/cognee-venv/bin/python \
+    ASTER_ARCHIVE_COGNEE_ROOT=/var/lib/aster-archive/cognee \
+    ASTER_ARCHIVE_COGNEE_MODEL_ROOT=/var/lib/aster-archive-models/cognee
+USER 10001:10001
+# GPU access is supplied explicitly by the host's CDI configuration. Merely
+# choosing this image never changes the bridge's requested processing device.
+CMD ["python", "-m", "aster_archive.cognee_bridge", "status"]

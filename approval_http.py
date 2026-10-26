@@ -88,9 +88,10 @@ def administrator_onboarding(record):
             "<code>exit_code: 0</code> and the expected hostname. A connected account or approved status alone "
             "does not verify command execution.</p></section>")
 
-def _valid_browser_origin(request):
+def _valid_browser_origin(request, public_origin=None):
     """Allow exact Origin or strict same-origin Fetch Metadata + HTTPS Referer."""
-    expected = os.environ.get("ASTER_MCP_PUBLIC_ORIGIN", "")
+    expected = (os.environ.get("ASTER_MCP_PUBLIC_ORIGIN", "")
+                if public_origin is None else public_origin)
     supplied = request.headers.get("origin")
     if not expected:
         return False
@@ -115,7 +116,14 @@ def append_query(url: str, params: dict) -> str:
     query.extend(params.items())
     return urlunsplit((parts.scheme,parts.netloc,parts.path,urlencode(query),parts.fragment))
 
-def owner_approval_app(db_path: str):
+def owner_approval_app(db_path: str, public_origin=None, onboarding=None):
+    # Bind approval validation to this service instance. Separate archive and
+    # host-control applications must never share a mutable process-wide origin.
+    origin = (os.environ.get("ASTER_MCP_PUBLIC_ORIGIN", "")
+              if public_origin is None else public_origin)
+    render_onboarding = administrator_onboarding if onboarding is None else onboarding
+    if not callable(render_onboarding):
+        raise TypeError("onboarding renderer must be callable")
     approvals=ApprovalStore(db_path)
     codes=AuthorizationCodeStore(db_path)
     sessions=ApprovalSessions(db_path)
@@ -138,7 +146,7 @@ def owner_approval_app(db_path: str):
               "<input type='hidden' name='nonce' value='"+escape(nonce,quote=True)+"'>"
               "<label>Pairing code <input name='pairing_code' type='password' required autocomplete='off'></label>"
               "<button type='submit'>Approve OAuth connection</button></form>"
-              +administrator_onboarding(record)+
+              +render_onboarding(record)+
               "</body></html>")
         response=HTMLResponse(body,status_code=403 if error else 200,headers={
             "Cache-Control":"no-store",
@@ -175,13 +183,13 @@ def owner_approval_app(db_path: str):
                 "<input type='hidden' name='request_id' value='" + escape(rid, quote=True) + "'>"
                 "<input type='hidden' name='nonce' value='" + escape(nonce, quote=True) + "'>"
                 "<button type='submit'>Continue to client</button></form>"
-                +administrator_onboarding(record)+"</body></html>")
+                +render_onboarding(record)+"</body></html>")
         return HTMLResponse(body, headers={"Cache-Control":"no-store",
             "Content-Security-Policy":"default-src 'none'; form-action 'self'; style-src 'unsafe-inline'; base-uri 'none'; frame-ancestors 'none'",
             "Referrer-Policy":"same-origin"})
 
     async def redeem(request):
-        if not _valid_browser_origin(request):
+        if not _valid_browser_origin(request, origin):
             return JSONResponse({"error":"invalid_origin"},status_code=403)
         if request.headers.get("content-type","").split(";")[0].strip().lower() != "application/x-www-form-urlencoded":
             return JSONResponse({"error":"invalid_content_type"},status_code=415)
@@ -209,7 +217,7 @@ def owner_approval_app(db_path: str):
                                 status_code=303,headers={"Cache-Control":"no-store","Referrer-Policy":"same-origin"})
 
     async def complete(request):
-        if not _valid_browser_origin(request):
+        if not _valid_browser_origin(request, origin):
             return JSONResponse({"error":"invalid_origin"},status_code=403)
         # TLS is terminated by Caddy; the internal ASGI URL is HTTP.
         # Compare against the configured canonical HTTPS origin instead.
@@ -244,7 +252,7 @@ def owner_approval_app(db_path: str):
               "<h1>OAuth pairing complete</h1>"
               "<p>Follow this link to finish connecting your MCP client.</p>"
               "<a href='"+escape(callback,quote=True)+"'>Return to MCP client</a>"
-              +administrator_onboarding(approved)+
+              +render_onboarding(approved)+
               "</body></html>")
         return HTMLResponse(body,status_code=200,headers={
             "Cache-Control":"no-store",

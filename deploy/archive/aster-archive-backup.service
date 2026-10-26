@@ -1,0 +1,25 @@
+[Unit]
+Description=Consistent Aster archive backup and encrypted independent upload
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=6h
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=root
+UMask=0077
+ExecStart=/usr/bin/python3 /home/tony/aster-conversation-archive/scripts/archive-offsite.py --config /etc/aster-archive-backup/offsite.json daily
+Restart=on-failure
+RestartSec=30min
+TimeoutStartSec=8h
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+CPUQuota=50%
+MemoryMax=1G
+TasksMax=96
+PrivateTmp=true
+NoNewPrivileges=true
+
