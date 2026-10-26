@@ -6,6 +6,7 @@ set -eu
 psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 \
   --set ingest_password="$ARCHIVE_INGEST_PASSWORD" \
   --set read_password="$ARCHIVE_READ_PASSWORD" <<'SQL'
+BEGIN;
 CREATE ROLE aster_archive_ingest LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
   PASSWORD :'ingest_password';
 CREATE ROLE aster_archive_read LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE
@@ -19,4 +20,5 @@ GRANT USAGE ON SCHEMA aster_archive TO aster_archive_read;
 ALTER DEFAULT PRIVILEGES FOR ROLE aster_archive_ingest IN SCHEMA aster_archive
   GRANT SELECT ON TABLES TO aster_archive_read;
 ALTER ROLE aster_archive_read SET default_transaction_read_only = on;
+COMMIT;
 SQL

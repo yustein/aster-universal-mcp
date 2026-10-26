@@ -50,7 +50,7 @@ services:
       test:
         - CMD-SHELL
         - >-
-          pg_isready -U postgres -d aster_archive &&
+          pg_isready -h 127.0.0.1 -U postgres -d aster_archive &&
           psql -U postgres -d aster_archive -Atqc
           "SELECT CASE WHEN
           (SELECT count(*) FROM pg_roles WHERE rolname IN ('aster_archive_ingest','aster_archive_read')) = 2

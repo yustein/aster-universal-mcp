@@ -115,8 +115,10 @@ The `migrate` service creates/upgrades archive and Procrastinate tables before
 other application services start. Initialization scripts run only for a new
 empty PostgreSQL volume. Changing passwords in `.env` does not rotate existing
 database role passwords; perform an explicit coordinated rotation instead.
-The database health check requires both archive roles and the correctly owned
-archive schema, as well as a responding PostgreSQL socket. If initialization
+The initializer applies role, schema and grant changes in one transaction. The
+database health check requires both archive roles and the correctly owned
+archive schema, as well as a responding TCP listener; PostgreSQL's temporary
+Unix-only initialization server does not satisfy this check. If initialization
 fails, inspect its logs and repair the specific cause before starting imports;
 an initialized data directory causes PostgreSQL to skip entrypoint scripts on
 the next start. Never wipe an existing volume as an initialization retry.
