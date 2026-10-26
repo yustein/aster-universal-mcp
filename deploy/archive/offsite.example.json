@@ -9,6 +9,7 @@
   "rclone_config": "/etc/aster-archive-backup/rclone.conf",
   "restic_program": "/usr/bin/restic",
   "backup_dir": "/home/tony/aster-archive-backups",
+  "local_backups_to_keep": 3,
   "state_dir": "/var/lib/aster-archive-backup",
   "host": "lenomila-aster-archive",
   "key_escrow": {

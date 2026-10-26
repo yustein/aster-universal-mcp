@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -75,6 +76,7 @@ def test_retry_reuses_pending_backup_without_new_dump(tmp_path, monkeypatch):
     offsite.recovery.save(pending, {"backup": "/existing-completed-backup"})
     monkeypatch.setattr(value, "anchor", lambda: {})
     monkeypatch.setattr(value, "run", lambda *a, **kw: pytest.fail("must not create another local backup"))
+    monkeypatch.setattr(value, "local_retention", lambda: pytest.fail("must not prune before retrying pending upload"))
     seen = []
     def fail_upload(path):
         seen.append(path)
@@ -234,3 +236,139 @@ def test_drive_config_rejects_mismatched_missing_or_non_drive_remote(drive_confi
     path.write_text(json.dumps(cfg | {"rclone_remote": remote, "repository": repository}))
     with pytest.raises(ValueError):
         offsite.config(path)
+
+
+def test_local_retention_default_and_explicit_count_are_validated(drive_configuration):
+    path, cfg = drive_configuration
+    assert offsite.config(path)["local_backups_to_keep"] == 3
+    path.write_text(json.dumps(cfg | {"local_backups_to_keep": 1}))
+    assert offsite.config(path)["local_backups_to_keep"] == 1
+    path.write_text(json.dumps(cfg | {"local_backups_to_keep": 7}))
+    assert offsite.config(path)["local_backups_to_keep"] == 7
+
+
+@pytest.mark.parametrize("count", [0, 8, -1, True, False, 1.0, "1", None])
+def test_invalid_local_retention_count_is_rejected(drive_configuration, count):
+    path, cfg = drive_configuration
+    path.write_text(json.dumps(cfg | {"local_backups_to_keep": count}))
+    with pytest.raises(ValueError, match="local_backups_to_keep"):
+        offsite.config(path)
+
+
+@pytest.fixture
+def managed_backups(tmp_path, monkeypatch):
+    if os.geteuid() != 0:
+        pytest.skip("managed local retention requires root-owned private backups")
+    value = runner(tmp_path, monkeypatch)
+    parent = Path(value.cfg["backup_dir"])
+    parent.mkdir(mode=0o700)
+    receipts = value.state / "snapshots"
+    receipts.mkdir(mode=0o700)
+    paths = []
+    rows = []
+    for index in range(5):
+        path = parent / f"aster-archive-202610{index + 1:02d}T000000Z-fixture{index}"
+        path.mkdir(mode=0o700)
+        lines = []
+        for name in ("database.dump", "files.tar.gz", "deployment.env"):
+            member = path / name
+            member.write_bytes(f"synthetic backup {index} member {name}\n".encode())
+            member.chmod(0o600)
+            lines.append(f"{offsite.digest(member)}  {name}\n")
+        (path / "SHA256SUMS").write_text("".join(lines))
+        (path / "SHA256SUMS").chmod(0o600)
+        row = {"snapshot_id": f"{index + 1:064x}", "backup": str(path),
+               "uploaded_at": f"2026-10-{index + 1:02d}T00:00:00Z",
+               "structural_check": True,
+               "manifest_sha256": offsite.digest(path / "SHA256SUMS")}
+        offsite.recovery.save(receipts / (row["snapshot_id"] + ".json"), row)
+        paths.append(path)
+        rows.append(row)
+    monkeypatch.setattr(value, "anchor", lambda: rows[0])
+    monkeypatch.setattr(value, "snapshots", lambda: [{"id": row["snapshot_id"]} for row in rows])
+    calls = []
+    monkeypatch.setattr(value, "identity", lambda: calls.append("identity"))
+    def check(*args, **kwargs):
+        assert args == ("check",)
+        assert all(path.is_dir() for path in paths)
+        calls.append("check")
+        return b""
+    monkeypatch.setattr(value, "restic", check)
+    return value, paths, rows, calls
+
+
+@pytest.mark.parametrize("count,removed,kept", [(None, 1, (0, 2, 3, 4)), (1, 3, (0, 4))])
+def test_managed_local_retention_preserves_anchor_and_configured_recent_backups(managed_backups, count, removed, kept):
+    value, paths, rows, calls = managed_backups
+    if count is not None:
+        value.cfg["local_backups_to_keep"] = count
+    assert value.local_retention() == removed
+    assert [index for index, path in enumerate(paths) if path.exists()] == list(kept)
+    assert calls == ["identity", "check"]
+
+
+def test_local_retention_preserves_pending_unuploaded_and_augmented_backups(managed_backups):
+    value, paths, rows, calls = managed_backups
+    value.cfg["local_backups_to_keep"] = 1
+    offsite.recovery.save(value.state / "pending-local-backup.json", {"backup": str(paths[1])})
+    # An unuploaded local copy has no eligible receipt even if it is old.
+    (value.state / "snapshots" / (rows[2]["snapshot_id"] + ".json")).unlink()
+    (paths[3] / "operator-note.txt").write_text("preserve augmented backup")
+    assert value.local_retention() == 0
+    assert all(path.is_dir() for path in paths)
+    assert calls == []
+
+
+def test_failed_remote_check_preserves_every_local_copy(managed_backups, monkeypatch):
+    value, paths, rows, calls = managed_backups
+    value.cfg["local_backups_to_keep"] = 1
+    def unavailable(*args, **kwargs):
+        raise RuntimeError("synthetic remote check failure")
+    monkeypatch.setattr(value, "restic", unavailable)
+    with pytest.raises(RuntimeError, match="remote check"):
+        value.local_retention()
+    assert all(path.is_dir() for path in paths)
+
+
+def test_changed_local_backup_bytes_prevent_deletion(managed_backups):
+    value, paths, rows, calls = managed_backups
+    value.cfg["local_backups_to_keep"] = 1
+    (paths[3] / "database.dump").write_bytes(b"changed without a matching manifest")
+    with pytest.raises(ValueError, match="checksum mismatch"):
+        value.local_retention()
+    assert all(path.is_dir() for path in paths)
+    assert calls == []
+
+
+def test_daily_prunes_uploaded_copies_before_capacity_measurement_and_after_upload(tmp_path, monkeypatch):
+    value = runner(tmp_path, monkeypatch)
+    monkeypatch.setattr(value, "anchor", lambda: {})
+    events = []
+    pending = value.state / "pending-local-backup.json"
+    calls = []
+    def retain():
+        calls.append(1)
+        events.append("retain")
+        assert pending.exists() == (len(calls) == 2)
+        return len(calls)
+    monkeypatch.setattr(value, "local_retention", retain)
+    monkeypatch.setattr(value, "stage", lambda *args, **kwargs: None)
+    monkeypatch.setattr(offsite.shutil, "disk_usage", lambda path: SimpleNamespace(free=100 * 1024**3))
+    backup = str(tmp_path / "backups" / "aster-archive-20261026T000000Z-new")
+    def run(argv, **kwargs):
+        if argv[0] == "bash":
+            events.append("create")
+            return ("Completed local backup: " + backup + "\n").encode()
+        events.append("measure")
+        assert events[0] == "retain"
+        return b"1\n"
+    monkeypatch.setattr(value, "run", run)
+    def upload(path):
+        assert path == backup and pending.exists()
+        events.append("upload")
+        return {"snapshot_id": "f" * 64}
+    monkeypatch.setattr(value, "upload", upload)
+    result = value.daily()
+    assert events == ["retain", "measure", "measure", "create", "upload", "retain"]
+    assert result["local_managed_backups_removed"] == 3
+    assert not pending.exists()

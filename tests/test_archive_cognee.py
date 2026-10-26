@@ -113,9 +113,15 @@ def test_supervised_sigterm_terminates_active_cognee_process_group(tmp_path,monk
             if self.calls==1:
                 raise _ShutdownRequested()
             return -signal.SIGTERM
+        def poll(self):
+            return -signal.SIGTERM if killed else None
     child=Child()
+    def killpg(pid, sig):
+        if sig == 0 and killed:
+            raise ProcessLookupError()
+        killed.append((pid, sig))
     monkeypatch.setattr(cognee_bridge.subprocess,'Popen',lambda *a,**k:child)
-    monkeypatch.setattr(cognee_bridge.os,'killpg',lambda pid,sig:killed.append((pid,sig)))
+    monkeypatch.setattr(cognee_bridge.os,'killpg',killpg)
     c=config(tmp_path)
     with pytest.raises(_ShutdownRequested):
         cognee_bridge._run_child(c,{'operation':'derive'},c.root/'scope')
@@ -335,3 +341,81 @@ print(json.dumps({'status':result['status'],'chunks':result['chunks'],
         value=json.loads(result.stdout)
         assert value['status']=='complete' and value['chunks']>=1 and value['summaries']>=1
         assert value['uid']==10001 and value['scoped_cache'] is True
+
+
+@requires_pg
+def test_completed_storage_counts_unseeded_passages_and_retries_on_idle(tmp_path, monkeypatch):
+    """A partly seeded revision must stay live; completed storage retries while idle."""
+    from dataclasses import replace
+    from aster_archive import cognee_bridge as bridge
+    from aster_archive import cognee_storage
+    from aster_archive.ingest import import_path
+    from aster_archive.storage import ArchiveStorageError
+    monkeypatch.setenv('ASTER_ARCHIVE_MIN_FREE_BYTES', '1')
+    store = PostgresArchive(DSN)
+    store.migrate()
+    KnowledgeStore(store).migrate()
+    owner = 'cognee-storage-' + uuid.uuid4().hex
+    source = 'account'
+    document = [{'id': 'conversation', 'title': 'Synthetic long storage fixture',
+        'update_time': 20, 'current_node': 'u',
+        'mapping': {'u': {'parent': None, 'children': [], 'message': {'id': 'u',
+            'author': {'role': 'user'}, 'content': {'content_type': 'text',
+            'parts': ['Marie Curie worked in Paris. ' * 4000]}}}}}]
+    source_file = tmp_path / 'export.json'
+    source_file.write_text(json.dumps(document))
+    archive_root = tmp_path / 'archive'
+    import_path(store, source_file, archive_root, owner, source)
+    c = replace(config(tmp_path), compact_completed=True)
+    assert process_pending(store, owner, source, archive_root, c,
+        limit=1, processor=synthetic_processor)['completed'] == 1
+    with store.connection() as conn:
+        passages = conn.execute('''SELECT p.passage_id,p.revision_id
+            FROM aster_archive.passages p
+            JOIN aster_archive.conversation_revisions r USING(revision_id)
+            WHERE r.owner_id=%s AND r.source_id=%s ORDER BY p.passage_id''',
+            (owner, source)).fetchall()
+        assert len(passages) > SAMPLE_LIMIT
+        assert len({row['revision_id'] for row in passages}) == 1
+        conn.execute('''UPDATE aster_archive.cognee_jobs j SET status='complete'
+            FROM aster_archive.passages p
+            JOIN aster_archive.conversation_revisions r USING(revision_id)
+            WHERE j.passage_id=p.passage_id AND r.owner_id=%s AND r.source_id=%s
+              AND j.pipeline_key=%s''', (owner, source, PIPELINE_KEY))
+    revision = passages[0]['revision_id']
+    scoped = c.root / 'revisions' / bridge.stable_id(owner, source, revision, PIPELINE_KEY)
+    (scoped / 'data').mkdir(parents=True)
+    (scoped / 'system').mkdir()
+    (scoped / 'data' / 'synthetic.txt').write_bytes(b'Synthetic source preserved.\n')
+    (scoped / 'system' / 'synthetic.lbug').write_bytes(b'GRAPH\0' * 4096)
+    with store.import_lock(owner, 'storage-qualification') as conn:
+        assert bridge._compact_completed_revisions(conn, owner, source, c) == 0
+    assert (scoped / 'data' / 'synthetic.txt').is_file()
+    assert not (scoped / cognee_storage.MARKER_NAME).exists()
+    with store.connection() as conn:
+        conn.execute('''INSERT INTO aster_archive.cognee_jobs(passage_id,pipeline_key,status)
+            SELECT p.passage_id,%s,'complete' FROM aster_archive.passages p
+            JOIN aster_archive.conversation_revisions r USING(revision_id)
+            WHERE r.owner_id=%s AND r.source_id=%s
+            ON CONFLICT(passage_id,pipeline_key) DO UPDATE SET status='complete' ''',
+            (PIPELINE_KEY, owner, source))
+    actual_compact = bridge.compact_revision
+    attempts = []
+    def interrupted(*args, **kwargs):
+        attempts.append(1)
+        raise ArchiveStorageError('synthetic compaction interruption')
+    monkeypatch.setattr(bridge, 'compact_revision', interrupted)
+    with pytest.raises(ArchiveStorageError):
+        process_pending(store, owner, source, archive_root, c,
+            limit=1, processor=synthetic_processor)
+    assert len(attempts) == 1
+    assert (scoped / 'data' / 'synthetic.txt').is_file()
+    monkeypatch.setattr(bridge, 'compact_revision', actual_compact)
+    result = process_pending(store, owner, source, archive_root, c,
+        limit=1, processor=synthetic_processor)
+    assert result['completed'] == result['failed'] == 0
+    saved = json.loads((scoped / cognee_storage.MARKER_NAME).read_text())
+    assert saved['state'] == 'frozen'
+    assert saved['eligible_passages'] == saved['completed_passages'] == len(passages)
+    assert not (scoped / 'data').exists()
+    assert (scoped / cognee_storage.ARCHIVE_NAME).is_file()

@@ -16,6 +16,7 @@ from importlib import resources
 import json
 import os
 from pathlib import Path
+import re
 import signal
 import subprocess
 import sys
@@ -25,9 +26,11 @@ import time
 from psycopg.types.json import Jsonb
 
 from .access import ArchiveScope
+from .cognee_storage import (compact_revision, hydrated_revision, revision_lock,
+                            block_unquiescent_writer, ARCHIVE_NAME, MARKER_NAME, ROOTS)
 from .knowledge import KnowledgeStore, _citation
 from .store import PostgresArchive, _identity, _scope_sql, stable_id
-from .storage import minimum_free_bytes, require_storage_reserve
+from .storage import ArchiveStorageError, minimum_free_bytes, require_storage_reserve
 
 COGNEE_VERSION = '1.6.3'
 GLINER_MODEL = 'fastino/gliner2.5-base-v1'
@@ -82,6 +85,7 @@ class CogneeConfig:
     device: str = 'cpu'
     gpu_memory_fraction: float = 0.9
     inference_batch_size: int = 1
+    compact_completed: bool = False
 
     def validate(self, *, models=True):
         if (not self.python.is_absolute() or not self.python.is_file()
@@ -95,7 +99,8 @@ class CogneeConfig:
                 or self.device not in ('cpu','cuda')
                 or type(self.gpu_memory_fraction) not in (int,float)
                 or not 0.1 <= self.gpu_memory_fraction <= 0.95
-                or type(self.inference_batch_size) is not int or not 1 <= self.inference_batch_size <= 16):
+                or type(self.inference_batch_size) is not int or not 1 <= self.inference_batch_size <= 16
+                or type(self.compact_completed) is not bool):
             raise ValueError('invalid Cognee resource budget')
         if models:
             manifest = self.model_root / 'manifest.json'
@@ -107,6 +112,9 @@ class CogneeConfig:
 
     @classmethod
     def from_env(cls):
+        compact = os.environ.get('ASTER_ARCHIVE_COGNEE_COMPACT_COMPLETED','0')
+        if compact not in ('0','1'):
+            raise ValueError('Cognee completed revision compaction must be 0 or 1')
         return cls(Path(os.environ.get('ASTER_ARCHIVE_COGNEE_PYTHON','')),
                    Path(os.environ.get('ASTER_ARCHIVE_COGNEE_ROOT',str(DEFAULT_ROOT))),
                    Path(os.environ.get('ASTER_ARCHIVE_COGNEE_MODEL_ROOT',str(DEFAULT_MODEL_ROOT))),
@@ -115,7 +123,8 @@ class CogneeConfig:
                    cpu_threads=int(os.environ.get('ASTER_ARCHIVE_COGNEE_CPU_THREADS','2')),
                    device=os.environ.get('ASTER_ARCHIVE_COGNEE_DEVICE','cpu'),
                    gpu_memory_fraction=float(os.environ.get('ASTER_ARCHIVE_COGNEE_GPU_MEMORY_FRACTION','0.9')),
-                   inference_batch_size=int(os.environ.get('ASTER_ARCHIVE_COGNEE_INFERENCE_BATCH_SIZE','1')))
+                   inference_batch_size=int(os.environ.get('ASTER_ARCHIVE_COGNEE_INFERENCE_BATCH_SIZE','1')),
+                   compact_completed=compact=='1')
 
 
 def child_environment(config: CogneeConfig, root: Path, *, offline=True) -> dict:
@@ -170,6 +179,35 @@ def child_environment(config: CogneeConfig, root: Path, *, offline=True) -> dict
     return env
 
 
+def _quiesce_process_group(process,root):
+    """Reap the leader and prove no descendant can still write a revision."""
+    try:
+        for signum, seconds in ((signal.SIGTERM,5),(signal.SIGKILL,2)):
+            try:
+                os.killpg(process.pid,signum)
+            except ProcessLookupError:
+                process.wait(timeout=seconds)
+                return
+            deadline=time.monotonic()+seconds
+            while time.monotonic()<deadline:
+                process.poll()  # Reap the leader; killpg(0) then covers descendants.
+                try:
+                    os.killpg(process.pid,0)
+                except ProcessLookupError:
+                    process.wait(timeout=max(0.1,deadline-time.monotonic()))
+                    return
+                time.sleep(0.05)
+    except (OSError,subprocess.TimeoutExpired):
+        pass
+    try:
+        block_unquiescent_writer(root,process.pid)
+    except Exception:
+        # If even the barrier cannot be persisted, exit the supervised worker
+        # so its container/service cgroup is torn down; never keep processing.
+        raise SystemExit(74) from None
+    raise CogneeRuntimeUnavailable('COGNEE_CHILD_GROUP_NOT_QUIESCENT')
+
+
 def _run_child(config: CogneeConfig, payload: dict, root: Path, *, prepare=False) -> dict:
     config.validate(models=not prepare)
     env = child_environment(config,root,offline=not prepare)
@@ -205,21 +243,11 @@ def _run_child(config: CogneeConfig, payload: dict, root: Path, *, prepare=False
                                 if peak_rss > config.memory_bytes:
                                     raise CogneeUnavailable('COGNEE_MEMORY_BUDGET')
         except BaseException as error:
-            try:
-                os.killpg(process.pid,signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid,signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
+            _quiesce_process_group(process,root)
             if isinstance(error, (KeyboardInterrupt, SystemExit)):
                 raise
             raise CogneeUnavailable('COGNEE_CHILD_INTERRUPTED') from None
+        _quiesce_process_group(process,root)
         if not response.is_file() or response.stat().st_size > 128_000:
             raise CogneeUnavailable('COGNEE_CHILD_FAILED')
         data = json.loads(response.read_text())
@@ -242,10 +270,36 @@ def prepare_models(config: CogneeConfig) -> dict:
 
 
 def process_passage(config: CogneeConfig, row: dict) -> dict:
+    config.validate()
     scope_root = config.root / 'revisions' / stable_id(row['owner_id'],row['source_id'],row['revision_id'],PIPELINE_KEY)
-    data = _run_child(config,{'operation':'derive','passage_id':row['passage_id'],
-        'text':row['text'],'role':row['role']},scope_root)
+    with revision_lock(scope_root):
+        cached = _read_completed_receipt(config,row,scope_root)
+        if cached is not None:
+            return _persist_passage_result(config,row,cached,scope_root)
+    with hydrated_revision(scope_root):
+        data = _run_child(config,{'operation':'derive','passage_id':row['passage_id'],
+            'text':row['text'],'role':row['role']},scope_root)
     return _persist_passage_result(config,row,data,scope_root)
+
+
+def _read_completed_receipt(config,row,scope_root):
+    """Replay an exact completed receipt without extracting a frozen graph."""
+    if (not isinstance(row.get('passage_id'),str) or not re.fullmatch('[a-f0-9]{64}',row['passage_id'])
+            or row.get('role') not in ('user','assistant')
+            or not isinstance(row.get('text'),str) or len(row['text'])>2000):
+        raise ValueError('invalid Cognee passage metadata or text budget')
+    path=scope_root/'receipts'/(row['passage_id']+'.json')
+    if path.is_symlink() or not path.is_file() or path.stat().st_size>=128_000:
+        return None
+    try:
+        data=json.loads(path.read_text())
+    except (ValueError,UnicodeError):
+        return None
+    if (not isinstance(data,dict) or data.get('status')!='complete'
+            or data.get('source_sha256')!=hashlib.sha256(row['text'].encode()).hexdigest()
+            or data.get('manifest_sha256')!=hashlib.sha256((config.model_root/'manifest.json').read_bytes()).hexdigest()):
+        return None
+    return data|{'reused_completed_receipt':True}
 
 
 def _persist_passage_result(config: CogneeConfig, row: dict, data: dict, scope_root: Path) -> dict:
@@ -296,6 +350,7 @@ class ScopedCogneeSession:
         self.work=None
         self.sequence=0
         self.peak_rss=0
+        self.storage_context=None
 
     def __enter__(self):
         return self
@@ -304,13 +359,23 @@ class ScopedCogneeSession:
         self.close()
 
     def _start(self):
-        env=child_environment(self.config,self.root)
-        self.directory=tempfile.TemporaryDirectory(prefix='session-',dir=self.root)
-        self.work=Path(self.directory.name)
-        request=self.work/'session.json';response=self.work/'session-result.json'
-        request.write_text(json.dumps({'operation':'serve','passage_ids':list(self.rows),
-                                      'verified_model_manifest':verified_model_manifest()}))
-        request.chmod(0o600)
+        try:
+            self.storage_context=hydrated_revision(self.root)
+            self.storage_context.__enter__()
+            env=child_environment(self.config,self.root)
+            self.directory=tempfile.TemporaryDirectory(prefix='session-',dir=self.root)
+            self.work=Path(self.directory.name)
+            request=self.work/'session.json';response=self.work/'session-result.json'
+            request.write_text(json.dumps({'operation':'serve','passage_ids':list(self.rows),
+                                          'verified_model_manifest':verified_model_manifest()}))
+            request.chmod(0o600)
+        except BaseException as error:
+            self.close()
+            if isinstance(error,ArchiveStorageError):
+                raise
+            if isinstance(error,(OSError,ValueError)):
+                raise CogneeRuntimeUnavailable('COGNEE_RUNTIME_UNAVAILABLE:LOCAL_PREFLIGHT_FAILED') from None
+            raise
         try:
             self.process=subprocess.Popen([str(self.config.python),'-I',
                 str(Path(__file__).with_name('cognee_runner.py')),str(request),str(response)],
@@ -324,32 +389,30 @@ class ScopedCogneeSession:
 
     def close(self):
         process=self.process
-        self.process=None
         if process is not None:
-            try:
-                if process.poll() is None:
-                    os.killpg(process.pid,signal.SIGTERM)
-            except ProcessLookupError:
-                pass
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(process.pid,signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                process.wait()
-        if self.directory is not None:
-            self.directory.cleanup()
+            _quiesce_process_group(process,self.root)
+        self.process=None
+        try:
+            if self.directory is not None:
+                self.directory.cleanup()
+        finally:
             self.directory=None
             self.work=None
+            if self.storage_context is not None:
+                self.storage_context.__exit__(None,None,None)
+                self.storage_context=None
 
     def derive(self,row: dict) -> dict:
         if ((row['owner_id'],row['source_id'],row['revision_id'])!=self.scope
                 or self.rows.get(row['passage_id'])!=(hashlib.sha256(row['text'].encode()).hexdigest(),row['role'])):
             raise ValueError('Cognee session source binding changed')
         if self.process is None or self.process.poll() is not None:
-            self.close();self._start()
+            self.close()
+            with revision_lock(self.root):
+                cached=_read_completed_receipt(self.config,row,self.root)
+                if cached is not None:
+                    return _persist_passage_result(self.config,row,cached,self.root)
+            self._start()
         if self.sequence>=MAX_SESSION_PASSAGES:
             raise ValueError('Cognee session request budget exceeded')
         index=self.sequence;self.sequence+=1
@@ -421,6 +484,39 @@ def seed_jobs(conn, owner_id, source_id, *, backlog=False, limit=SAMPLE_LIMIT):
     return len(rows)
 
 
+def _compact_completed_revisions(conn,owner_id,source_id,config,limit=4):
+    """Bounded catch-up also runs on an idle worker after a compaction crash."""
+    if not config.compact_completed:
+        return 0
+    # A LEFT JOIN includes unseeded passages. Never infer completion from only
+    # the jobs already enqueued; a historical revision can be partly seeded.
+    rows=conn.execute('''SELECT r.revision_id,count(*) AS eligible,
+            count(*) FILTER(WHERE j.status='complete') AS completed
+        FROM aster_archive.passages p
+        JOIN aster_archive.nodes n USING(revision_id,node_id)
+        JOIN aster_archive.conversation_revisions r USING(revision_id)
+        LEFT JOIN aster_archive.cognee_jobs j ON j.passage_id=p.passage_id AND j.pipeline_key=%s
+        WHERE r.owner_id=%s AND r.source_id=%s AND n.role IN ('user','assistant')
+        GROUP BY r.revision_id
+        HAVING count(*)=count(*) FILTER(WHERE j.status='complete')
+        ORDER BY r.revision_id''',(PIPELINE_KEY,owner_id,source_id)).fetchall()
+    packed=0
+    for row in rows:
+        root=config.root/'revisions'/stable_id(owner_id,source_id,row['revision_id'],PIPELINE_KEY)
+        if not root.is_dir():
+            continue
+        # Completed archives are immutable and checked on hydration/backup
+        # qualification. Do not rehash every previous graph on every batch.
+        if ((root/MARKER_NAME).is_file() and (root/ARCHIVE_NAME).is_file()
+                and not any((root/name).exists() or (root/name).is_symlink() for name in ROOTS)):
+            continue
+        compact_revision(root,eligible_passages=row['eligible'],completed_passages=row['completed'])
+        packed+=1
+        if packed>=limit:
+            break
+    return packed
+
+
 def process_pending(store: PostgresArchive, owner_id: str, source_id: str,
                     archive_root: Path, config: CogneeConfig, limit=2, *, backlog=False, processor=None) -> dict:
     _identity(owner_id); _identity(source_id)
@@ -429,6 +525,7 @@ def process_pending(store: PostgresArchive, owner_id: str, source_id: str,
     minimum_free_bytes(); config.validate()
     knowledge = KnowledgeStore(store)
     with store.import_lock(owner_id,'cognee:' + stable_id(source_id,PIPELINE_KEY)) as conn:
+        _compact_completed_revisions(conn,owner_id,source_id,config)
         if backlog:
             counts = conn.execute('''SELECT j.status,count(*) AS n FROM aster_archive.cognee_jobs j
                 JOIN aster_archive.passages p USING(passage_id)
@@ -507,20 +604,25 @@ def process_pending(store: PostgresArchive, owner_id: str, source_id: str,
                         conn.execute('''UPDATE aster_archive.cognee_jobs SET status='complete',finished_at=now(),error_code=NULL,receipt=%s
                             WHERE passage_id=%s AND pipeline_key=%s''',(Jsonb(receipt),pid,PIPELINE_KEY))
                     completed += 1
-                except CogneeRuntimeUnavailable:
+                except (CogneeRuntimeUnavailable,ArchiveStorageError) as error:
                     # No passage inference started successfully. Keep earlier
                     # legitimate attempts, refund this shared-runtime attempt,
                     # and let the supervisor apply its bounded error backoff.
+                    code=('local_cognee_storage_unavailable' if isinstance(error,ArchiveStorageError)
+                          else 'local_cognee_runtime_unavailable')
                     conn.execute('''UPDATE aster_archive.cognee_jobs SET status='pending',
                         attempts=GREATEST(attempts-1,0),started_at=NULL,finished_at=now(),
-                        error_code='local_cognee_runtime_unavailable'
-                        WHERE passage_id=%s AND pipeline_key=%s''',(pid,PIPELINE_KEY))
+                        error_code=%s
+                        WHERE passage_id=%s AND pipeline_key=%s''',(code,pid,PIPELINE_KEY))
                     raise
                 except (CogneeUnavailable,ValueError,KeyError):
                     conn.execute('''UPDATE aster_archive.cognee_jobs SET status=CASE WHEN attempts>=%s THEN 'failed' ELSE 'pending' END,
                         finished_at=now(),error_code='local_cognee_processing_failed' WHERE passage_id=%s AND pipeline_key=%s''',
                         (MAX_ATTEMPTS,pid,PIPELINE_KEY))
                     failed += 1
+        # ExitStack has closed and reaped all children before any archive can
+        # become authoritative. This stays inside the owner/source import lock.
+        _compact_completed_revisions(conn,owner_id,source_id,config)
         return {'completed':completed,'failed':failed,'pipeline_key':PIPELINE_KEY,'mode':'backlog' if backlog else 'bounded_sample'}
 
 

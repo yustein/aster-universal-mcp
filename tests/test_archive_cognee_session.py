@@ -212,7 +212,7 @@ def test_child_exit_cannot_hide_atomically_published_response(config,tmp_path,mo
     item=row(1)
     with bridge.ScopedCogneeSession(config,[item]) as session:
         def start():
-            session.root.mkdir(parents=True)
+            session.root.mkdir(parents=True,exist_ok=True)
             (session.root/'receipts').mkdir()
             session.work=tmp_path/'channel';session.work.mkdir()
             class Child:

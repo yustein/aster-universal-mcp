@@ -96,6 +96,7 @@ with verified values:
 | `rclone_config` | Root-private copy of the qualified configuration, normally `/etc/aster-archive-backup/rclone.conf` |
 | `restic_program` | Exact installed executable path |
 | `backup_dir` | Root-private completed local backup directory |
+| `local_backups_to_keep` | Integer 1–7, default 3; recent uploaded local copies retained in addition to the qualified recovery anchor |
 | `state_dir` | Root-private receipts/cache directory, normally `/var/lib/aster-archive-backup` |
 | `key_escrow.reference` | Verified private ChatGPT recovery-key file reference |
 | `key_escrow.password_sha256` | Digest of the exact password-file bytes |
@@ -392,13 +393,30 @@ receipt without creating another dump or uploading another snapshot. A requested
 remote prune is retryable even when a prior attempt already forgot the selected
 snapshot records.
 
-Before creating another local backup, the daily wrapper checks estimated
-database/original size and the 10 GiB free-space reserve. It never deletes
-unuploaded local backups to make a failed job appear successful. Once the new
-upload succeeds, it retains three newest managed local backups plus the local
-recovery anchor. Cleanup is limited to root-private, recorded, unchanged backup
-directories containing exactly the four expected files. Unrecorded backups and
-operator-augmented directories are preserved.
+Before creating another local backup, the daily wrapper applies guarded local
+retention, then checks estimated database/original size and the 10 GiB free-space
+reserve. The optional `local_backups_to_keep` setting accepts 1–7 and defaults to
+3. A space-constrained host can explicitly retain one recent uploaded local copy
+plus its qualified local recovery anchor, leaving room to stage the next copy.
+Retention runs again after a successful upload. A pending upload skips
+pre-creation pruning, and its exact local input is always protected.
+
+Cleanup is limited to root-private, recorded, unchanged backup directories
+containing exactly the four expected files, with verified local checksums and a
+structurally checked uploaded snapshot still present in the qualified remote
+repository. Before deleting the first eligible local copy, repository identity
+and `restic check` must pass. Unuploaded, unrecorded, pending, operator-augmented
+and anchor backups are preserved. This setting does not change remote retention.
+
+Completed Cognee revisions may contain `completed-storage.tar.xz` and its
+checksum manifest instead of unpacked `data`, `system` and `cache` directories.
+The full archive and manifest are included in the ordinary corpus backup;
+per-passage receipts remain outside and the PostgreSQL reader remains usable.
+Restore them together. Use a storage-aware Cognee worker, or hydrate the exact
+revision with `python -m aster_archive.cognee_storage hydrate /absolute/revision/root`
+before an older worker or raw graph tool opens it. Hydration verifies every
+member and retains the compressed recovery copy. See `archive-knowledge.md`
+for the qualification and capacity limits.
 
 Remote retention starts with a dry-run policy: 7 daily, 4 weekly, 6 monthly,
 and at least 2 newest snapshots, grouped by this archive host and tag. The wrapper

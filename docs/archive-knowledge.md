@@ -46,6 +46,57 @@ Source passages are reconstructed by original part offsets before sentence extra
 
 Jobs are versioned by revision and pipeline key. A PostgreSQL session advisory lock serializes one owner/source/pipeline worker. On process death the lock is released and its `running` receipt can resume; records and the completion checkpoint commit together. Three interrupted attempts exhaust the receipt. Permanent source/budget failures remain failed; operators inspect them before requeueing. No traceback or original message is persisted as a job error.
 
+## Completed revision storage
+
+Cognee backend access control gives each passage dataset its own graph and
+vector store. The surrounding owner/source/immutable-revision directory does
+not remove that per-dataset overhead. Keep this isolation when sizing the disk;
+sharing a physical backend without equivalent source filtering changes recall
+semantics.
+
+An explicitly qualified host can set `ASTER_ARCHIVE_COGNEE_COMPACT_COMPLETED=1`
+to preserve completed revision stores as lossless XZ archives. The worker checks
+all eligible user/assistant passages, including those not yet seeded into its
+queue, before compression. It closes and reaps the entire child process group,
+then holds the owner/source import lock and a revision file lock while freezing
+`data`, `system` and `cache`, including database sidecars. Source ZIPs,
+per-passage receipts and PostgreSQL knowledge records remain directly readable.
+
+The archive uses XZ preset 3 with bounded memory. A complete file inventory,
+per-file SHA-256 hashes and the compressed archive hash are verified before a
+durable marker permits removal of the unpacked copies. Unexpected changed files
+are preserved. An interrupted compression leaves the original authoritative;
+an interrupted cleanup or hydration resumes from the committed archive. A
+bounded catch-up pass retries completed revisions even when ingestion is idle.
+No graph/vector data or passage-to-dataset isolation is discarded.
+
+If child-process quiescence cannot be proved, a durable
+`.writer-quiescence-blocked.json` marker prevents further use of that revision.
+An operator must stop and verify the remaining writer processes before clearing
+that marker; normal worker retries do not remove it.
+
+Before a storage-aware worker opens a frozen revision it hydrates the exact
+files under the same revision lock. A matching completed passage receipt can
+replay without unpacking the graph. Manual hydration for a raw graph tool or
+older worker is available through:
+
+```bash
+python -m aster_archive.cognee_storage hydrate /absolute/revision/root
+```
+
+Hydrate with the archive UID and enough free capacity for the expanded files.
+The compressed copy remains available after hydration. Do not roll back to a
+worker unaware of this format while it may open frozen revisions. Retain the
+new storage module and hydrate required revisions first, or rebuild the CPU
+runtime from the same storage-aware source.
+
+Qualification must include real store compression and byte-for-byte restoration,
+database reopening, receipt replay, interrupted cleanup/hydration and hostile
+archive rejection. Per-revision archives are included in the normal corpus
+backup. Capacity estimates must include the largest active revision, extraction
+headroom, the source ZIP, PostgreSQL and local backup staging. Compression ratios
+vary; the existing minimum-free-space guard still controls progress.
+
 ## Isolated Cognee runtime
 
 Pinned artifacts live in `deploy/archive/cognee/`:

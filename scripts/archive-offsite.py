@@ -84,6 +84,14 @@ def drive_remote(value):
     return remote
 
 
+def local_backups_to_keep(value):
+    """Keep at least one recent uploaded local backup, plus the recovery anchor."""
+    count = value.get("local_backups_to_keep", 3)
+    if type(count) is not int or not 1 <= count <= 7:
+        raise ValueError("local_backups_to_keep must be an integer from 1 to 7")
+    return count
+
+
 def validate_sftp(value):
     if value["repository"] != SFTP_REPOSITORY or Path(value["ssh_config"]) != SFTP_CONFIG:
         raise ValueError("use the exact dedicated SFTP alias, chroot path, and SSH configuration")
@@ -151,6 +159,7 @@ def sftp_available_bytes(output):
 
 def config(path):
     value = json.loads(private_file(path).read_text())
+    value["local_backups_to_keep"] = local_backups_to_keep(value)
     if value.get("expected_hostname") != socket.gethostname():
         raise ValueError("wrong archive host")
     repository = value["repository"]
@@ -383,6 +392,7 @@ class Offsite:
         return receipt
 
     def local_retention(self):
+        count = local_backups_to_keep(self.cfg)
         anchor = self.anchor()
         remote_ids = {item["id"] for item in self.snapshots()}
         if anchor["snapshot_id"] not in remote_ids:
@@ -394,8 +404,16 @@ class Offsite:
                 rows.append(row)
         rows.sort(key=lambda item: item["uploaded_at"], reverse=True)
         distinct = list(dict.fromkeys(row["backup"] for row in rows))
-        keep = set(distinct[:3]) | {anchor["backup"]}
+        keep = set(distinct[:count]) | {anchor["backup"]}
+        pending = self.state / "pending-local-backup.json"
+        if pending.exists():
+            pending_value = json.loads(private_file(pending).read_text())
+            pending_backup = pending_value.get("backup")
+            if not isinstance(pending_backup, str) or not Path(pending_backup).is_absolute():
+                raise ValueError("invalid pending local backup receipt")
+            keep.add(pending_backup)
         removed = 0
+        remote_checked = False
         for name in distinct:
             if name in keep:
                 continue
@@ -414,6 +432,12 @@ class Offsite:
             if digest(path / "SHA256SUMS") != matching["manifest_sha256"]:
                 raise ValueError("local backup manifest changed")
             recovery.checked_backup(path)
+            if not remote_checked:
+                # Pre-creation retention must qualify the same remote before
+                # releasing local space. A failed check leaves every copy.
+                self.identity()
+                self.restic("check")
+                remote_checked = True
             shutil.rmtree(path)
             removed += 1
         return removed
@@ -421,10 +445,16 @@ class Offsite:
     def daily(self):
         self.anchor()
         pending = self.state / "pending-local-backup.json"
+        removed_before = 0
         if pending.exists():
             pending_value = json.loads(private_file(pending).read_text())
             backup = pending_value["backup"]
         else:
+            # Release only completed, uploaded and checked managed backups
+            # before measuring room for a new consistent snapshot. An upload
+            # retry takes the pending branch and cannot prune its own input.
+            self.stage("retaining_uploaded_local_backups")
+            removed_before = self.local_retention()
             self.stage("checking_local_capacity")
             size = int(self.run(recovery.COMPOSE + ["exec", "-T", "db", "psql", "-U", "postgres", "-d", "postgres",
                                 "-Atqc", "SELECT pg_database_size('aster_archive')"], capture=True, timeout=60).strip())
@@ -453,7 +483,7 @@ class Offsite:
             receipt = self.upload(backup)
             pending_value["snapshot_id"] = receipt["snapshot_id"]
             recovery.save(pending, pending_value)
-        removed = self.local_retention()
+        removed = removed_before + self.local_retention()
         pending.unlink()
         return {"snapshot_id": receipt["snapshot_id"], "local_managed_backups_removed": removed}
 
