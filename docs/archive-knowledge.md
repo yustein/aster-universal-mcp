@@ -197,6 +197,57 @@ python -m aster_archive.enrichment_worker cognee --owner OWNER --source SOURCE -
 
 The supervised worker also accepts the explicit environment setting `ASTER_ARCHIVE_COGNEE_ENABLE_BACKLOG=1`. Its default is `0`; any value other than `0` or `1` fails startup before jobs are touched. The CLI flag or that environment setting enables the same five-completed-passage prerequisite. Sources with fewer than five eligible passages cannot pass this initial backlog gate. A permanent failure no longer blocks the rest of an already qualified backlog; its sanitized receipt remains available for operator investigation.
 
+### Read-only completion and progress probe
+
+Run the host operator probe against the existing MCP reader container:
+
+```sh
+sudo python3 scripts/archive-enrichment-status.py --owner OWNER --source SOURCE \
+  --container aster-archive-mcp-1 --state-dir /var/lib/aster-archive-enrichment
+```
+
+Omit `--state-dir` for a snapshot without host file writes. The probe loads no
+models and changes no database rows, worker settings, containers, or services.
+All database reads use one read-only repeatable-read snapshot. Its bounded JSON
+contains counts, pipeline identities, a hash of the current revision and import scope, and
+completion flags; it contains no conversation IDs, titles, passages, or credentials.
+
+Completion requires at least one successfully completed import, no unfinished
+or failed imports, no ambiguous or missing current revisions, complete embeddings
+for all current passages, and completed Cognee jobs for every current user or
+assistant passage. The latter denominator includes work not yet seeded. Other
+message roles remain part of the embedding denominator; retained superseded
+revisions are excluded from both current-coverage completion tests. Zero queued
+jobs alone never proves completion. New exports can create new outstanding work.
+
+With `--state-dir`, the root-private directory receives an atomically replaced
+`latest.json` and append-only `history.ndjson`. Each component retains its last
+progress time across observations of the same corpus fingerprint; remaining work
+with no progress for two hours is marked stalled. A new fingerprint starts a new
+baseline, and the first observation never claims a stall. The probe reports
+failures and stalls without resetting retry budgets, restarting workers, clearing
+storage barriers, or sending notifications. It is suitable for an external
+scheduler or completion watch that investigates those conditions separately.
+
+For persistent host observations, copy `deploy/archive/enrichment-status.env.example`
+to `/etc/aster-archive/enrichment-status.env` as root with mode `0600`, and set the
+actual repository path, authorized owner/source, and existing reader container.
+Copy `deploy/archive/aster-archive-enrichment-status.service` and `.timer` to
+`/etc/systemd/system/`, then validate and enable the timer:
+
+```sh
+sudo systemd-analyze verify /etc/systemd/system/aster-archive-enrichment-status.service \
+  /etc/systemd/system/aster-archive-enrichment-status.timer
+sudo systemctl daemon-reload
+sudo systemctl enable --now aster-archive-enrichment-status.timer
+sudo systemctl start aster-archive-enrichment-status.service
+```
+
+The timer observes progress every fifteen minutes after its initial boot delay.
+The service uses `/var/lib/aster-archive-enrichment` for private state. Verify its
+first result and timer state; a successful observation can still report incomplete
+work or a stall, so completion supervision must inspect the JSON flags.
+
 Graph processing writes and fsyncs a private completed child receipt for each passage before returning that result. Each passage is claimed and acknowledged separately, even when its session shares loaded models. If the PostgreSQL acknowledgement fails afterward, retry reuses the matching receipt instead of recreating the graph. PostgreSQL records and job completion are one transaction; stable IDs make replay idempotent. A partial session failure preserves receipts already completed. Child success with no summary is counted explicitly as zero summaries, not filled with invented text. Passage-specific failures retry at most three attempts and retain a sanitized failure receipt. Allowlisted shared runtime/configuration failures, including unavailable CUDA and failed model verification, restore the current job to pending, refund only that initialization attempt, and pause through the supervisor's normal error backoff. Earlier passage attempts remain counted. These shared faults require operator recovery without exhausting every passage's retry budget; no source text or raw driver error is included in the recorded failure.
 
 Both supervised workers handle SIGTERM/SIGINT by unwinding the active batch and releasing its session lock. An active Cognee child receives process-group termination; its completed child receipt remains available for restart. An interrupted job retains its durable attempt and can resume within the existing three-attempt budget. Progress logs contain only the component/mode, counts and fixed error codes; they contain no conversation text, owner/source names, SQL, database URLs or raw exceptions. Operational failures wait for the next poll, without adding another job retry mechanism. Counts report work acknowledged by this worker invocation, not total archive coverage; the existing `status` commands read durable coverage.

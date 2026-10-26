@@ -1,0 +1,19 @@
+[Unit]
+Description=Record Aster archive enrichment completion and progress
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+EnvironmentFile=/etc/aster-archive/enrichment-status.env
+ExecStart=/usr/bin/python3 ${ASTER_ARCHIVE_REPO}/scripts/archive-enrichment-status.py --owner ${ASTER_ARCHIVE_OWNER} --source ${ASTER_ARCHIVE_SOURCE} --container ${ASTER_ARCHIVE_READER_CONTAINER} --state-dir /var/lib/aster-archive-enrichment
+TimeoutStartSec=150
+Nice=10
+NoNewPrivileges=true
+PrivateTmp=true
+StateDirectory=aster-archive-enrichment
+StateDirectoryMode=0700
+
