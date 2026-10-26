@@ -281,11 +281,39 @@ daily; scheduling export acquisition remains a separate account capability.
 
 ## Connect an authorized ChatGPT client
 
-After HTTPS routing is verified, register the dedicated archive MCP endpoint
-`https://YOUR-ARCHIVE-ORIGIN/mcp` using the existing owner pairing flow. This
-service reuses Aster's OAuth implementation and its current `system:admin`
-scope name, but exposes only the archive's read tools. It contains no command,
-file-upload, raw-SQL, or Coordinator-write MCP tools.
+### Create the ChatGPT web connection
+
+After HTTPS routing is verified, add the existing archive server directly in
+ChatGPT web:
+
+1. Open **Plugins** in the intended account or workspace.
+2. Select **+ → Add custom MCP server**.
+3. Enter **Aster Conversation Archive** as the name. Under **Connection**, use
+   the verified public endpoint `https://YOUR-ARCHIVE-ORIGIN/mcp`.
+4. Select **OAuth** with **dynamic client registration (DCR)**. This server uses
+   DCR; it does not require a manually supplied static client ID or client secret.
+5. Review the server warning, acknowledge it, and select **Create as a plugin**.
+   Complete the OAuth owner pairing below when prompted, then review the eight
+   discovered read-only tools. Install the resulting plugin and complete its
+   account connection if prompted.
+
+The current Plugins flow does not require Developer Mode. See OpenAI's
+[custom MCP connection guide](https://help.openai.com/en/articles/12584461-connecting-custom-mcp-servers-in-chatgpt),
+[connection and testing guide](https://developers.openai.com/plugins/deploy/connect-chatgpt),
+and [authentication options](https://developers.openai.com/api/docs/guides/custom-mcp-server).
+
+The standalone package in
+[`plugins/aster-conversation-archive`](../../plugins/aster-conversation-archive/README.md)
+is for compatible local or desktop runtimes. Saving or uploading its ZIP with
+Plugin Creator stores a package; it does **not** create the ChatGPT web App
+binding or complete OAuth. A desktop-only package listing without an account
+connection is not completion of this web setup.
+
+### Pair and grant the exact client
+
+This service reuses Aster's OAuth implementation and its current `system:admin`
+scope name, but exposes only the archive's eight read tools. It contains no
+command, file-upload, raw-SQL, or Coordinator-write MCP tools.
 
 Issue a short-lived pairing code **in a local operator terminal**, after MCP has
 created its private OAuth database:
@@ -350,9 +378,12 @@ scope by inference. Do not modify the machine executor's administrator allowlist
 to enable archive access. Recreate the `mcp` service after changing its ACL so
 configuration reloading is explicit.
 
-Verify from a fresh authenticated ChatGPT connection: search a known synthetic
-phrase, fetch its exact passage, confirm citation and source IDs, check context,
-then confirm an unauthorized source/client is denied. Canonical passage URLs
+Setup is complete only after the intended ChatGPT account is connected and its
+tools work in a fresh conversation. Select the installed archive plugin, call
+`archive_coverage`, search a known synthetic phrase, fetch its exact passage,
+confirm citation and source IDs, and check context. Then confirm an unauthorized
+source/client is denied. A saved package, successful tool scan, or OAuth success
+alone does not establish archive read access. Canonical passage URLs
 require the same authorization; a normal browser click without a bearer token
 currently returns 401. No anonymous conversation transcript is published.
 

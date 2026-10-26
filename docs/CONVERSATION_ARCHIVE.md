@@ -20,7 +20,7 @@ scope and is not part of this importer.
 | Canonical database | PostgreSQL 18.6; versioned schema and source-backed conversation/node revisions |
 | Lexical retrieval | PostgreSQL GIN indexes with simple, English and Turkish dictionaries |
 | Durable jobs | Procrastinate 3.10.0; transactional outbox, bounded retries and heartbeat recovery |
-| MCP | Existing Aster OAuth composition and MCP SDK 2.3.0; four read-only tools |
+| MCP | Existing Aster OAuth composition and MCP SDK 2.3.0; eight read-only tools |
 | Continuous acquisition | Stable-file watcher for an operator-controlled inbox |
 | Deployment | Separate Docker Compose services, persistent volumes and resource caps |
 | Backup | PostgreSQL logical dump, SQLite online backup, original files and configuration |
@@ -141,6 +141,17 @@ external model charges or exactly-once actions by a general-purpose agent.
 | `fetch(id)` | Exact passage text, source identity, revision, role and offsets |
 | `archive_context(id, limit, cursor)` | Paginated ancestor-path evidence in that revision |
 | `archive_coverage()` | Visible corpus counts, source date range, import states and stage limits |
+| `archive_search(query, mode, limit)` | Explicit lexical, semantic or hybrid passage retrieval with coverage disclosure |
+| `archive_knowledge_search(query, kind, limit)` | Scoped derived summaries and decision candidates with source citations |
+| `archive_knowledge_fetch(id)` | One derived record and its checked canonical evidence |
+| `archive_decision_history(conversation_id, limit, cursor)` | Candidate history across retained revisions and branches; not verified decisions |
+
+For ChatGPT web, follow the
+[direct custom MCP server setup](../deploy/archive/README.md#connect-an-authorized-chatgpt-client):
+**Plugins → + → Add custom MCP server**, using the existing HTTPS endpoint and
+OAuth DCR. The standalone plugin ZIP targets compatible local or desktop
+runtimes; uploading it does not create a ChatGPT web App binding. Confirm the
+actual account connection and tool calls before marking setup complete.
 
 The existing OAuth protocol is reused with a dedicated archive origin/database.
 Its current scope name is `system:admin`, but this service registers only archive
