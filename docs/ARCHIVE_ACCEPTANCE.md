@@ -1,11 +1,12 @@
-# Conversation archive development verification
+# Conversation archive verification
 
-Date: 26 October 2026. This record covers the first archive implementation in
-source, before live Lenomila deployment or a new ChatGPT archive connection.
+Date: 26 October 2026. This record separates initial development tests from
+subsequent native Linux deployment qualification. A fresh public ChatGPT archive
+connection and full-account coverage remain separate acceptance gates.
 
 ## Combined regression result
 
-The final combined command used an isolated, synthetic-only PostgreSQL database:
+The initial combined command used an isolated, synthetic-only PostgreSQL database:
 
 ```text
 ASTER_ARCHIVE_TEST_DSN=<isolated PostgreSQL DSN> .venv/bin/python -m pytest -q
@@ -90,9 +91,8 @@ symlink rejection, allowed operations and shell syntax were checked.
 
 The Dockerfile pins Python 3.12.14 and the complete runtime dependency lock.
 Compose syntax/structure and shell scripts were checked, but Docker was not
-available in the development environment. Image construction, container startup,
-reverse-proxy peer identity and full container operation therefore remain
-unverified here.
+available in the development environment. The native deployment checks below
+subsequently exercised the built image and actual container lifecycle.
 
 ## Storage reserve follow-up
 
@@ -116,13 +116,71 @@ queued job, quarantine receipt or dead letter. The guard measures the archive
 filesystem and does not reserve space against other host processes or monitor a
 database placed on another filesystem.
 
+## Native deployment qualification
+
+The deployment was exercised on native Ubuntu 24.04.4 LTS with Docker Engine
+29.1.3 and Compose 2.40.3. The application image used Python 3.12.14 and the pinned
+runtime lock; PostgreSQL ran from `postgres:18.6-bookworm`. No ingestion VM is
+involved. The qualified implementation commit is
+`84b1c3aaf26fc086476347a27e279bc6a913008c`; its built application image is
+`sha256:8e262cddb52c4912d64282b7aa998de5b7d19745696da944761ee9c5a1a7c3c8`.
+
+Two packaging defects were found and corrected during these checks:
+
+- A private clone umask made the bind-mounted PostgreSQL initializer unreadable
+  by the database user. The runbook now sets the public script to mode 0755.
+  Initialization applies roles, schema ownership and grants in one transaction;
+  readiness requires the final TCP listener and the initialized roles/schema.
+  The original incomplete, empty database was repaired only after verifying
+  that both application roles, the archive schema and all user tables were
+  absent. A subsequent separate, empty container/volume verified fresh atomic
+  initialization without manual repair, then was removed.
+- The deployment helper named `operator.py` shadowed Python's standard-library
+  module during a cold backup process. It was renamed `archive_operator.py`
+  without changing its authority checks. Actual-script subprocess regressions
+  run with `-E -S -B`, preventing site initialization from hiding the collision.
+  The focused backup/operator suites passed **8 tests in 0.20 seconds**, with
+  no skips. Both corrected entrypoints were then exercised in the built image.
+
+The following native synthetic checks passed:
+
+- The deployed durable worker completed one queued conversation with two answer
+  branches. Exact English/Turkish text, original SHA256, branch context,
+  owner-scope denial, stable passage identity and repeat-import idempotency were
+  checked. The fixture had one conversation, one revision and three passages
+  under a dedicated qualification owner; personal-source coverage stayed zero.
+- A normal stop/start of the archive writer services and restart of PostgreSQL
+  preserved the same exact passage and original. This was a container restart,
+  not a host reboot or an injected crash during a real import.
+- The actual backup script produced a PostgreSQL custom-format dump, original
+  objects, a consistent OAuth SQLite snapshot, the client ACL, private deployment
+  configuration and checksums. A deliberately separate database and three new
+  volumes received the restore. Verification used the restricted reader role
+  and confirmed the exact passage, original SHA256, branch/scope checks, SQLite
+  integrity and empty-deny ACL. The disposable restore targets were removed.
+- Only the synthetic conversation was then tombstoned. Its small, explicitly
+  tagged receipts remain, and it never contributes to personal-source counts.
+
+Docker is enabled at host startup and the persistent services use
+`restart: unless-stopped`. Existing host power settings were checked: automatic
+AC sleep and lid-triggered suspend were disabled, and sleep/hibernate targets
+were masked. These observations do not prove recovery after a full host reboot,
+power loss, or network outage.
+
+The database has no published host port. OAuth state was initialized offline
+with an empty client ACL; no public archive listener, DNS/tunnel change, owner
+pairing, or fresh ChatGPT MCP connection was part of this qualification.
+Private source-transfer and real-import receipts remain on the target host;
+personal conversation content, identifiers and corpus inventories are not
+included in this public verification record.
+
 ## Limits on this acceptance
 
-This is development evidence for the exact implemented archive behavior. It does
-not establish actual full-account coverage, real-export compatibility beyond the
-supported synthetic formats, corpus throughput, hardware sizing, live public
-OAuth/MCP pairing, host/VM reboot recovery, independent offsite backup or a full
-restore. The newly requested export has not been consumed by this verification.
+This establishes the tested development behavior and the native synthetic
+deployment/restore path. It does not establish actual full-account coverage,
+corpus throughput or a capacity envelope, live public OAuth/MCP pairing,
+native-host reboot recovery, an offsite copy, or restoration of an entire real
+corpus. The newly requested export has not been consumed by this verification.
 
 Embeddings, pgvector indexes, evidence-linked knowledge extraction, accepted
 decision reconciliation and attachment processing remain held/later stages. No

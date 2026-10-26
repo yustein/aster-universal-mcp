@@ -3,8 +3,11 @@
 This package starts a separate PostgreSQL 18.6 archive, import watcher, durable
 job worker, and authenticated read-only MCP service. It does not modify Aster PA,
 the Coordinator's database, existing host-execution MCP services, DNS, or tunnels.
-The Docker deployment has not yet been qualified on Lenomila. The application
-can be tested against a local PostgreSQL instance independently of this package.
+Native bootstrap, durable synthetic import, exact/scoped retrieval, ordinary
+container restart, backup and an isolated reader-role restore have been checked
+on Lenomila; see [the dated verification record](../../docs/ARCHIVE_ACCEPTANCE.md).
+Public MCP access, host reboot and offsite recovery remain separate gates.
+The application can also be tested against a local PostgreSQL instance.
 The image pins Python **3.12.14** and installs the checked-in
 `requirements-archive-lock.txt` before installing the application without
 dependency resolution. The Dockerfile-specific ignore file excludes private
