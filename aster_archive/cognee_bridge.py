@@ -36,6 +36,7 @@ EMBEDDING_MODEL = 'BAAI/bge-small-en-v1.5'
 PIPELINE_KEY = 'cognee-1.6.3-gliner2.1.0-base-54785d51-bge-small-en-archive-schema-v1-pilot'
 MAX_ATTEMPTS = 3
 SAMPLE_LIMIT = 5
+MAX_SESSION_PASSAGES = 100
 DEFAULT_ROOT = Path('/var/lib/aster-archive/cognee')
 DEFAULT_MODEL_ROOT = Path('/var/lib/aster-archive-models/cognee')
 
@@ -273,7 +274,7 @@ def _persist_passage_result(config: CogneeConfig, row: dict, data: dict, scope_r
 
 
 class ScopedCogneeSession:
-    """Reuse one credential-free child for at most twenty same-revision rows.
+    """Reuse one credential-free child for at most 100 same-revision rows.
 
     Each request remains a separately claimed, timed and acknowledged passage.
     A child failure closes the process; a later request starts a clean child.
@@ -281,7 +282,7 @@ class ScopedCogneeSession:
     """
     def __init__(self, config: CogneeConfig, rows: list[dict]):
         config.validate()
-        if not 1 <= len(rows) <= 20:
+        if not 1 <= len(rows) <= MAX_SESSION_PASSAGES:
             raise ValueError('invalid Cognee session size')
         scopes={(r['owner_id'],r['source_id'],r['revision_id']) for r in rows}
         if len(scopes)!=1 or len({r['passage_id'] for r in rows})!=len(rows):
@@ -349,7 +350,7 @@ class ScopedCogneeSession:
             raise ValueError('Cognee session source binding changed')
         if self.process is None or self.process.poll() is not None:
             self.close();self._start()
-        if self.sequence>=20:
+        if self.sequence>=MAX_SESSION_PASSAGES:
             raise ValueError('Cognee session request budget exceeded')
         index=self.sequence;self.sequence+=1
         request=self.work/f'request-{index}.json';response=self.work/f'response-{index}.json'
@@ -423,7 +424,7 @@ def seed_jobs(conn, owner_id, source_id, *, backlog=False, limit=SAMPLE_LIMIT):
 def process_pending(store: PostgresArchive, owner_id: str, source_id: str,
                     archive_root: Path, config: CogneeConfig, limit=2, *, backlog=False, processor=None) -> dict:
     _identity(owner_id); _identity(source_id)
-    if type(limit) is not int or not 1<=limit<=20:
+    if type(limit) is not int or not 1<=limit<=MAX_SESSION_PASSAGES:
         raise ValueError('invalid Cognee batch limit')
     minimum_free_bytes(); config.validate()
     knowledge = KnowledgeStore(store)

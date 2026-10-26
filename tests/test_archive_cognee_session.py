@@ -133,7 +133,7 @@ def synthetic_child(tmp_path,monkeypatch):
 work=pathlib.Path(sys.argv[1]).parent
 root=pathlib.Path.cwd();receipts=root/'receipts';receipts.mkdir(exist_ok=True)
 manifest=hashlib.sha256((pathlib.Path(os.environ['ASTER_COGNEE_MODEL_ROOT'])/'manifest.json').read_bytes()).hexdigest()
-for index in range(20):
+for index in range(len(json.loads(pathlib.Path(sys.argv[1]).read_text())['passage_ids'])):
     request=work/f'request-{index}.json'
     while not request.exists():time.sleep(.01)
     item=json.loads(request.read_text())
@@ -175,6 +175,25 @@ def test_session_reuses_one_child_and_replays_after_child_death(config,synthetic
     assert all(child.poll() is not None for child in synthetic_child)
     assert len(list(session.root.glob('receipts/*.json')))==3
     assert not list(session.root.glob('session-*'))
+
+
+def test_hundred_passage_session_is_bounded_and_header_fits_budget(config,synthetic_child):
+    assert bridge.MAX_SESSION_PASSAGES==runner.MAX_SESSION_PASSAGES==100
+    rows=[row(number) for number in range(1,101)]
+    with pytest.raises(ValueError,match='session size'):
+        bridge.ScopedCogneeSession(config,rows+[row(101)])
+    with bridge.ScopedCogneeSession(config,rows) as session:
+        pids=set()
+        for item in rows:
+            result=session.derive(item)
+            assert result['summaries']==[item['text']]
+            pids.add(result['runtime']['runner_pid'])
+        header=session.work/'session.json'
+        assert header.stat().st_size<32_000
+        assert len(json.loads(header.read_text())['passage_ids'])==100
+        assert len(pids)==1 and len(synthetic_child)==1
+    assert len(list(session.root.glob('receipts/*.json')))==100
+    assert all(child.poll() is not None for child in synthetic_child)
 
 
 def test_failed_child_does_not_destroy_prior_receipt_or_next_passage(config,synthetic_child):

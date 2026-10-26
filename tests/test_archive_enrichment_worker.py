@@ -61,6 +61,21 @@ def test_invalid_worker_settings_cannot_consume_pending_job(tmp_path,monkeypatch
     assert calls==[]
 
 
+def test_cognee_accepts_hundred_passage_batch_but_rejects_over_budget(tmp_path,monkeypatch):
+    calls=[]
+    def process(*args,limit,backlog):
+        calls.append(limit)
+        return {'completed':limit,'failed':0}
+    monkeypatch.setattr(worker,'process_pending',process)
+    result=worker.run_worker('cognee',object(),'owner','source',tmp_path,
+        config=PreparedConfig(),batch_size=100,once=True,emit=lambda event:None)
+    assert calls==[100] and result['completed']==100
+    with pytest.raises(ValueError,match='batch size'):
+        worker.run_worker('cognee',object(),'owner','source',tmp_path,
+            config=PreparedConfig(),batch_size=101,once=True,emit=lambda event:None)
+    assert calls==[100]
+
+
 def test_invalid_storage_reserve_cannot_consume_pending_job(tmp_path,monkeypatch):
     calls=[]
     monkeypatch.setattr(worker,'derive_pending',lambda *a,**k:calls.append(1))

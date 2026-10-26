@@ -17,7 +17,7 @@ import threading
 
 import psycopg
 
-from .cognee_bridge import CogneeConfig, CogneeUnavailable, process_pending
+from .cognee_bridge import CogneeConfig, CogneeUnavailable, MAX_SESSION_PASSAGES, process_pending
 from .knowledge import derive_pending
 from .storage import ArchiveStorageError, minimum_free_bytes
 from .store import PostgresArchive, _identity
@@ -101,7 +101,7 @@ def run_worker(component: str, store: PostgresArchive, owner_id: str,
     _identity(owner_id); _identity(source_id)
     if batch_size is None:
         batch_size = 10 if component == 'knowledge' else 2
-    maximum = 100 if component == 'knowledge' else 20
+    maximum = 100 if component == 'knowledge' else MAX_SESSION_PASSAGES
     if type(batch_size) is not int or not 1 <= batch_size <= maximum:
         raise ValueError('invalid enrichment batch size')
     if type(poll_seconds) is not int or not 1 <= poll_seconds <= 3600:

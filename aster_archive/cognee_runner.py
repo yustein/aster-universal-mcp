@@ -25,6 +25,7 @@ GLINER_REVISION='54785d51df8d86a0d8f2eb212fec15871aad2c4d'
 EMBEDDING_MODEL='BAAI/bge-small-en-v1.5'
 EMBEDDING_REPO='qdrant/bge-small-en-v1.5-onnx-q'
 EMBEDDING_REVISION='aa8f8b060edb00e03bfdd08813a2949946c8ba55'
+MAX_SESSION_PASSAGES=100
 
 
 class RuntimeInitializationFailure(RuntimeError):
@@ -295,7 +296,7 @@ def _safe_error_code(error):
 async def serve(payload,model_root,work):
     import re
     allowed=payload.get('passage_ids')
-    if (not isinstance(allowed,list) or not 1<=len(allowed)<=20
+    if (not isinstance(allowed,list) or not 1<=len(allowed)<=MAX_SESSION_PASSAGES
             or len(set(allowed))!=len(allowed)
             or any(not isinstance(item,str) or not re.fullmatch('[a-f0-9]{64}',item) for item in allowed)):
         raise ValueError('invalid_session_passages')
