@@ -61,6 +61,34 @@ def _scope_sql(scope: ArchiveScope, alias: str = "c") -> tuple[str, list]:
     return " AND ".join(terms), values
 
 
+def _fts_search_sql(scope: ArchiveScope, query: str, limit: int, *,
+                    order_by_updated: bool) -> tuple[str, list]:
+    """Plan text matching before correlated membership joins, without a hit cap.
+
+    Materializing only passage-local matches lets PostgreSQL use the text
+    indexes instead of scanning every passage of each authorized revision.
+    Scope and full revision ownership are still checked before the final
+    ordering and limit; current_revision alone is not an ownership guarantee.
+    """
+    where, args = _scope_sql(scope)
+    updated_order = "r.source_updated DESC NULLS LAST," if order_by_updated else ""
+    sql = f"""WITH q AS (SELECT plainto_tsquery('simple',%s) s,
+            plainto_tsquery('english',%s) e,plainto_tsquery('turkish',%s) t),
+        hits AS MATERIALIZED (
+            SELECT p.passage_id,p.revision_id,
+                greatest(ts_rank_cd(p.lexemes_simple,q.s),ts_rank_cd(p.lexemes_english,q.e),
+                         ts_rank_cd(p.lexemes_turkish,q.t)) AS score
+            FROM aster_archive.passages p,q
+            WHERE p.lexemes_simple@@q.s OR p.lexemes_english@@q.e OR p.lexemes_turkish@@q.t)
+        SELECT h.passage_id,r.title,h.score
+        FROM hits h JOIN aster_archive.conversation_revisions r USING(revision_id)
+        WHERE EXISTS (SELECT 1 FROM aster_archive.conversations c
+            WHERE {where} AND c.owner_id=r.owner_id AND c.source_id=r.source_id
+              AND c.conversation_id=r.conversation_id AND c.current_revision=r.revision_id)
+        ORDER BY h.score DESC,{updated_order}h.passage_id LIMIT %s"""
+    return sql, [query] * 3 + args + [limit]
+
+
 _PASSAGE_SELECT = """
     SELECT p.passage_id,p.revision_id,p.node_id,p.part_index,p.start_char,
            p.end_char,p.text,p.text_sha256,n.role,n.parent_id,
@@ -277,26 +305,19 @@ class PostgresArchive:
         exact = query[1:-1] if len(query) >= 2 and query.startswith('"') and query.endswith('"') else None
         if exact == "":
             raise ValueError("empty exact phrase")
-        where, args = _scope_sql(scope)
         if exact is not None:
             # Exact phrase mode also handles punctuation-only terms. It is
             # bounded by the read transaction's statement timeout.
-            match, params = "strpos(p.text,%s)>0", [exact]
-            rank = "1.0"
-            cte = ""
+            where, args = _scope_sql(scope)
+            sql = f"""SELECT p.passage_id,r.title,n.role,1.0 AS score
+                FROM aster_archive.passages p JOIN aster_archive.conversation_revisions r USING(revision_id)
+                JOIN aster_archive.conversations c USING(owner_id,source_id,conversation_id)
+                JOIN aster_archive.nodes n USING(revision_id,node_id)
+                WHERE {where} AND c.current_revision=p.revision_id AND strpos(p.text,%s)>0
+                ORDER BY score DESC,r.source_updated DESC NULLS LAST,p.passage_id LIMIT %s"""
+            parameters = args + [exact, limit]
         else:
-            cte = """WITH q AS (SELECT plainto_tsquery('simple',%s) s,
-                plainto_tsquery('english',%s) e,plainto_tsquery('turkish',%s) t) """
-            match = "(p.lexemes_simple@@q.s OR p.lexemes_english@@q.e OR p.lexemes_turkish@@q.t)"
-            params = [query, query, query]
-            rank = "greatest(ts_rank_cd(p.lexemes_simple,q.s),ts_rank_cd(p.lexemes_english,q.e),ts_rank_cd(p.lexemes_turkish,q.t))"
-        sql = f"""{cte} SELECT p.passage_id,r.title,n.role,{rank} AS score
-            FROM aster_archive.passages p JOIN aster_archive.conversation_revisions r USING(revision_id)
-            JOIN aster_archive.conversations c USING(owner_id,source_id,conversation_id)
-            JOIN aster_archive.nodes n USING(revision_id,node_id) {', q' if exact is None else ''}
-            WHERE {where} AND c.current_revision=p.revision_id AND {match}
-            ORDER BY score DESC,r.source_updated DESC NULLS LAST,p.passage_id LIMIT %s"""
-        parameters = params + args + [limit] if exact is None else args + params + [limit]
+            sql, parameters = _fts_search_sql(scope, query, limit, order_by_updated=True)
         with self.connection(readonly=True) as conn:
             rows = conn.execute(sql, parameters).fetchall()
         return {"results": [{"id": row["passage_id"], "title": row["title"] or "Untitled conversation"}

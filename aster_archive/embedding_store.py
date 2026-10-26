@@ -9,7 +9,7 @@ from psycopg.types.json import Jsonb
 
 from .embeddings import DIMENSIONS, EmbeddedText, generation_id, validate_vector
 from .enrichment import migrate_component
-from .store import MAX_SEARCH_CHARS, _scope_sql
+from .store import MAX_SEARCH_CHARS, _fts_search_sql, _scope_sql
 
 
 _HASH = re.compile(r"[a-f0-9]{64}\Z")
@@ -297,13 +297,8 @@ class EmbeddingStore:
                 [vector, identity] + args + [vector, candidates]).fetchall()
             lexical = []
             if mode == "hybrid":
-                lexical = conn.execute(f"""WITH q AS (SELECT plainto_tsquery('simple',%s) s,
-                    plainto_tsquery('english',%s) e,plainto_tsquery('turkish',%s) t)
-                    SELECT p.passage_id,r.title,greatest(ts_rank_cd(p.lexemes_simple,q.s),
-                        ts_rank_cd(p.lexemes_english,q.e),ts_rank_cd(p.lexemes_turkish,q.t)) AS score
-                    {_CURRENT},q WHERE {where} AND c.current_revision=p.revision_id
-                      AND (p.lexemes_simple@@q.s OR p.lexemes_english@@q.e OR p.lexemes_turkish@@q.t)
-                    ORDER BY score DESC,p.passage_id LIMIT %s""", [query] * 3 + args + [candidates]).fetchall()
+                sql, parameters = _fts_search_sql(scope, query, candidates, order_by_updated=False)
+                lexical = conn.execute(sql, parameters).fetchall()
             coverage = self._coverage(conn, scope, identity)
         results = {}
         for kind, rows in (("semantic", semantic), ("lexical", lexical)):

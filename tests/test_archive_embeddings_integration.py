@@ -291,6 +291,83 @@ def test_hybrid_fuses_lexical_and_semantic_and_quotes_remain_exact(store, scope,
     assert store.fetch(scope, exact["results"][0]["id"])["text"] == "semantic literal şafak ışığı"
 
 
+@pytest.mark.parametrize("foreign_relation", ["owner", "source", "conversation"])
+def test_fts_current_pointer_cannot_borrow_foreign_revision(store, scope, encoder, tmp_path,
+                                                         foreign_relation):
+    ingest(store, tmp_path, scope, [chat("shared", "semantic visible original")])
+    foreign = scope
+    foreign_chat = "shared"
+    if foreign_relation == "owner":
+        foreign = replace(scope, owner_id="foreign-owner-" + uuid.uuid4().hex)
+    elif foreign_relation == "source":
+        foreign = replace(scope, source_ids=("private",))
+    else:
+        foreign_chat = "hidden-conversation"
+    ingest(store, tmp_path, foreign, [chat(foreign_chat, "semantic membershipguard secret")])
+    assert len(store.search(foreign, "membershipguard")["results"]) == 1
+    broad = replace(scope, source_ids=None)
+    embeddings = ready(store, broad, encoder)
+    drain(embeddings, broad, encoder, tmp_path)
+    if foreign_relation == "owner":
+        ready(store, foreign, encoder)
+        drain(embeddings, foreign, encoder, tmp_path)
+    with store.connection() as conn:
+        target = conn.execute("""UPDATE aster_archive.conversations SET project_id='hidden'
+            WHERE owner_id=%s AND source_id=%s AND conversation_id=%s
+            RETURNING current_revision""",
+            (foreign.owner_id, foreign.source_ids[0], foreign_chat)).fetchone()["current_revision"]
+        # current_revision has no ownership FK. Search must validate the full
+        # revision identity even if an authorized pointer is misbound.
+        conn.execute("""UPDATE aster_archive.conversations SET project_id='visible',current_revision=%s
+            WHERE owner_id=%s AND source_id=%s AND conversation_id='shared'""",
+            (target, scope.owner_id, scope.source_ids[0]))
+    scoped = replace(scope, project_ids=("visible",))
+    assert store.search(scoped, "membershipguard")["results"] == []
+    assert embeddings.search(scoped, "membershipguard", encoder=encoder, mode="hybrid")["results"] == []
+
+
+def test_fts_limit_follows_scope_with_unembedded_authorized_result(store, scope, encoder, tmp_path):
+    ingest(store, tmp_path, scope, [chat("allowed", "limitguard")])
+    hidden = replace(scope, source_ids=("private",))
+    # More forbidden matches than the hybrid candidate budget (50 at limit=1),
+    # each with a higher text rank than the authorized passage.
+    ingest(store, tmp_path, hidden, [chat(f"blocked-{i}", "limitguard " * 10) for i in range(55)])
+    with store.connection() as conn:
+        conn.execute("UPDATE aster_archive.conversations SET project_id='visible' WHERE owner_id=%s",
+                     (scope.owner_id,))
+    scoped = replace(scope, project_ids=("visible",))
+    assert store.search(replace(scoped, source_ids=None), "limitguard", limit=1)["results"][0]["title"].startswith(
+        "Synthetic blocked-")
+    canonical = store.search(scoped, "limitguard", limit=1)["results"]
+    assert len(canonical) == 1 and canonical[0]["title"] == "Synthetic allowed"
+    embeddings = ready(store, scoped, encoder)
+    # Leave vectors pending, so a semantic result cannot conceal lost lexical
+    # candidates when a global text-match limit is applied before access checks.
+    hybrid = embeddings.search(scoped, "limitguard", encoder=encoder, mode="hybrid", limit=1)["results"]
+    assert [row["id"] for row in hybrid] == [canonical[0]["id"]]
+    assert hybrid[0]["lexical_rank"] == 1 and hybrid[0]["semantic_rank"] is None
+
+
+def test_fts_tie_orders_remain_distinct_for_canonical_and_hybrid(store, scope, encoder, tmp_path):
+    ingest(store, tmp_path, scope, [chat(f"tie-{i}", "tieguard") for i in range(4)])
+    with store.connection() as conn:
+        rows = conn.execute("""SELECT p.passage_id,p.revision_id
+            FROM aster_archive.passages p JOIN aster_archive.conversation_revisions r USING(revision_id)
+            WHERE r.owner_id=%s ORDER BY p.passage_id""", (scope.owner_id,)).fetchall()
+        # Set synthetic sort metadata after IDs are known: date and ID orders
+        # must differ, with both a date tie and a NULL timestamp represented.
+        for row, updated in zip(rows, (10, None, 10, 20), strict=True):
+            conn.execute("UPDATE aster_archive.conversation_revisions SET source_updated=%s WHERE revision_id=%s",
+                         (updated, row["revision_id"]))
+    identities = [row["passage_id"] for row in rows]
+    canonical = store.search(scope, "tieguard")["results"]
+    assert [row["id"] for row in canonical] == [identities[3], identities[0], identities[2], identities[1]]
+    embeddings = ready(store, scope, encoder)
+    hybrid = embeddings.search(scope, "tieguard", encoder=encoder, mode="hybrid")["results"]
+    assert [row["id"] for row in hybrid] == identities
+    assert [row["lexical_rank"] for row in hybrid] == [1, 2, 3, 4]
+
+
 @pytest.mark.skipif(not os.environ.get("ASTER_ARCHIVE_TEST_MODEL_DIR"),
                     reason="requires prepared local E5 model; never downloads in tests")
 def test_real_e5_cross_language_semantic_hit_round_trips_exact_unicode(store, scope, tmp_path):
