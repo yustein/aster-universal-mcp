@@ -1,13 +1,15 @@
 # Amsterdam Coordinator operator deployment
 
 These assets deploy the existing PR #6 companion independently of Aster PA on
-the current Amsterdam host. They do not change PA listeners, databases, accounts,
-the archive, DNS or Cloudflare configuration. Core source baseline:
+the current Amsterdam host. The companion installer preserves PA listeners,
+databases, accounts, the archive, DNS and Cloudflare configuration. The separate
+tunnel templates describe the dedicated Coordinator ingress used on that same
+host. Core source baseline:
 `69b60816b4d316cb0f6ddc96bcf6727b9c38aa8a` (`0.2.0a1`).
 
 The installer prepares files and reloads systemd. **It does not enable, start,
-stop or restart a service.** Remote changes remain the operator's explicit
-deployment action. No privileged machine executor is enabled in the companion.
+stop or restart a service.** The tunnel setup and activation below are separate
+operator actions. No privileged machine executor is enabled in the companion.
 
 ## Layout and service limits
 
@@ -24,6 +26,8 @@ deployment action. No privileged machine executor is enabled in the companion.
 | `operator.lock` | Shared application/operator and exclusive backup lock |
 | `/var/backups/aster-coordinator` | Root-private local recovery sets |
 | `/var/lib/aster-coordinator-restore-check` | Root-private temporary offline restores |
+| `/etc/aster-coordinator-tunnel` | Root-owned tunnel configuration, group `aster-coordinator-tunnel`, mode 0750 |
+| `/etc/aster-coordinator-tunnel/credentials.json` | Host-only credentials for this tunnel, root:`aster-coordinator-tunnel`, mode 0640 |
 
 The service binds `127.0.0.1:18769`, runs as `aster-coordinator`, uses a private
 umask, and can write only its state directory. The unit caps memory at 512 MiB
@@ -57,6 +61,15 @@ empty allowlist only when none exists. It creates no OAuth grants, agents, route
 or native subscriptions. Keep source snapshots and recovery copies outside this
 live state directory.
 
+The 2026-10-27 Amsterdam installation used the shared, root-owned staging path
+`/opt/aster-coordinator-staging-20261027` for the reviewed wheel and non-secret
+installation assets. The MCP administrator service's `PrivateTmp` isolated its
+`/var/tmp` files from the durable systemd installation job. Staging under `/opt`
+made the same artifacts visible to both processes without changing either
+service's isolation. Keep the reviewed wheel digest with the deployment record;
+do not stage task or OAuth databases, callback material, or tunnel credentials
+alongside those distributable assets.
+
 ## Permanent HTTPS ingress
 
 Configure the dedicated `coord.27.fyi` ingress to the loopback listener. Source
@@ -66,28 +79,64 @@ Configure the dedicated `coord.27.fyi` ingress to the loopback listener. Source
 - `Host` is exactly `coord.27.fyi`.
 - `X-Forwarded-Proto` is exactly `https`.
 
-A local Caddy reverse-proxy stanza may use:
+The Amsterdam deployment uses a dedicated named Cloudflare tunnel, with no new
+server or changes to the existing Caddy, PA, dashboard, or other tunnel services.
+Use `tunnel.config.yml.example` and `aster-coordinator-tunnel.service` as the
+source templates. The origin is `http://127.0.0.1:18769`, `httpHostHeader` is
+`coord.27.fyi`, and the tunnel's metrics listener is only `127.0.0.1:18770`.
+Verify that a public HTTPS request arrives with `X-Forwarded-Proto: https`.
+Do not attach another host as a replica of a tunnel whose routes address this
+machine's localhost.
 
-```caddyfile
-coord.27.fyi {
-    reverse_proxy 127.0.0.1:18769 {
-        header_up Host coord.27.fyi
-        header_up X-Forwarded-Proto https
-    }
-}
+The tunnel runs under its own unprivileged system user/group,
+`aster-coordinator-tunnel`, separate from the companion. Its unit uses the
+existing `/usr/local/bin/cloudflared` binary; the deployed official version was
+`2026.10.3`. `--no-autoupdate` keeps binary upgrades an explicit operator action.
+The unit limits memory to 192 MiB, CPU to 25% of one CPU, and tasks to 64. It has
+no capabilities, cannot read the PA application or Coordinator state directories,
+and starts at `multi-user.target` after it is enabled.
+
+Create the dedicated account only if absent, then verify that an existing
+account has the intended non-root identity, system group and nologin shell:
+
+```sh
+if ! getent passwd aster-coordinator-tunnel >/dev/null; then
+  sudo useradd --system --user-group --home-dir /nonexistent --no-create-home \
+    --shell /usr/sbin/nologin aster-coordinator-tunnel
+fi
+sudo install -d -o root -g aster-coordinator-tunnel -m 0750 \
+  /etc/aster-coordinator-tunnel
 ```
 
-For a dedicated named Cloudflare tunnel, use `http://127.0.0.1:18769` as origin,
-set the original HTTP host to `coord.27.fyi`, and verify the actual forwarded
-scheme. If a local proxy is needed, apply the same headers there. Do not attach a
-different host as a replica of an existing tunnel whose routes address another
-machine's localhost. Preserve every existing PA/dashboard route.
+The explicit **0750 directory mode is required**, including when the directory
+already exists; a 0700 directory prevents the dedicated service user from reading
+its credentials. Keep `config.yml` and `credentials.json` owned by
+`root:aster-coordinator-tunnel` with mode 0640. Substitute the assigned dedicated
+tunnel UUID for the template placeholder and supply only that tunnel's
+credentials through the authorized private administrator channel. No Cloudflare
+account certificate is required by this running service. Do not commit, display,
+or copy the credential JSON into source snapshots or deployment archives.
 
-After inspecting the new ingress and unit, activate explicitly:
+Install the reviewed, substituted configuration and unit after inspecting any
+existing files. Preserve an existing credential file rather than overwriting it
+with a template. Validate the configuration as the service user:
+
+```sh
+sudo runuser -u aster-coordinator-tunnel -- /usr/local/bin/cloudflared \
+  tunnel --config /etc/aster-coordinator-tunnel/config.yml ingress validate
+sudo systemd-analyze verify /etc/systemd/system/aster-coordinator-tunnel.service
+sudo systemctl daemon-reload
+```
+
+The dedicated DNS hostname must route to this assigned tunnel; preserve all
+other DNS records and tunnel routes. After inspecting that route and both units,
+activate explicitly:
 
 ```sh
 sudo systemctl enable --now aster-coordinator.service
+sudo systemctl enable --now aster-coordinator-tunnel.service
 sudo systemctl show aster-coordinator.service -p ActiveState -p MainPID -p MemoryCurrent
+sudo systemctl show aster-coordinator-tunnel.service -p ActiveState -p MainPID -p MemoryCurrent
 ```
 
 Check the public OAuth discovery and MCP behavior, then use the actual connected

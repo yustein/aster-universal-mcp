@@ -1,0 +1,12 @@
+# Dedicated Coordinator tunnel. Substitute only the assigned tunnel UUID.
+# Credentials stay on the host and must never be committed with this template.
+tunnel: REPLACE_WITH_COORDINATOR_TUNNEL_UUID
+credentials-file: /etc/aster-coordinator-tunnel/credentials.json
+metrics: 127.0.0.1:18770
+
+ingress:
+  - hostname: coord.27.fyi
+    service: http://127.0.0.1:18769
+    originRequest:
+      httpHostHeader: coord.27.fyi
+  - service: http_status:404
