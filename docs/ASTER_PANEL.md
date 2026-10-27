@@ -110,6 +110,11 @@ cutover; verify the backup before starting the new release. If startup or
 health verification fails, restore the previous venv symlink and restart the
 same service. This feature changes no persistent Coordinator schema.
 
+Run the existing installer from `/`, not `/opt/aster-coordinator`: the latter
+contains `operator.py`, which can shadow Python's standard-library module
+during virtual-environment creation. See [ASTER_PANEL_ACCEPTANCE.md](ASTER_PANEL_ACCEPTANCE.md)
+for the verified deployment, artifact digest, host checks and rollback target.
+
 Opening the panel does not enable background event delivery. Existing native
 worker events retain their separate binding and delivery requirements.
 
