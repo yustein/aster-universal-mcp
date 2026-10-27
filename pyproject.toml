@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aster-universal-mcp"
-version = "0.2.0a1"
+version = "0.2.0a2"
 description = "Self-hosted authenticated MCP with optional provider-neutral agent coordination and Windows/Linux machine tools"
 requires-python = ">=3.11"
 license = {text = "Apache-2.0"}
@@ -24,3 +24,6 @@ py-modules = ["oauth_service", "oauth_runtime", "oauth_token_resource", "provide
   "admin_jobs", "file_transfer", "filesystem", "proxy_security", "oauth_http_diagnostics",
   "gated_runtime", "identity", "local_token_verifier", "bearer_gate",
   "restricted_executor", "aster_mcp"]
+
+[tool.setuptools.package-data]
+coordination = ["ui/*.html"]

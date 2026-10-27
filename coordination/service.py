@@ -15,6 +15,7 @@ from oauth_http_diagnostics import OAuthHTTPDiagnostics
 from proxy_security import PublicOriginGate
 from tool_access import current_client_access
 from .tools import register_coordination_tools
+from .panel import build_panel_app
 
 
 def create_app():
@@ -29,6 +30,8 @@ def create_app():
         raise ValueError("all companion state paths must be absolute")
     if len({path.resolve() for path in (oauth_db, coordination_db, allowlist)}) != 3:
         raise ValueError("coordination, OAuth and allowlist must be separate state files")
+    stores = {}
+    panel, register_panel_tools = build_panel_app(lambda: stores["coordination"], allowlist_path=allowlist)
     def register(server):
         @server.tool()
         def connection_status() -> dict:
@@ -39,10 +42,13 @@ def create_app():
                     "machine_execution": False,
                     "next_step": "The local operator must approve this exact client and enroll it with coordination.cli; then call aster_profile."}
         store = register_coordination_tools(server, db_path=str(coordination_db), allowlist_path=allowlist)
+        stores["coordination"] = store
+        register_panel_tools(server)
         if native_flag == "1":
             from .native import NativeEvents, install_native_events
             install_native_events(server, NativeEvents(store, allowlist_path=allowlist, oauth_db_path=oauth_db))
-    server = build_oauth_server(db_path=str(oauth_db), origin=origin, register_tools=register)
+    server = build_oauth_server(db_path=str(oauth_db), origin=origin, register_tools=register,
+                                extensions=[panel])
     app = server.streamable_http_app(
         stateless_http=True, json_response=True, host="127.0.0.1",
         transport_security=TransportSecuritySettings(

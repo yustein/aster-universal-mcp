@@ -29,3 +29,9 @@ passwords.txt
 *.vhdx
 *.zip
 candidate-manifest.json
+
+# MCP App frontend and isolated verification artifacts
+ui/node_modules/
+ui/test-artifacts/
+ui/test-output/
+baseline.whl
