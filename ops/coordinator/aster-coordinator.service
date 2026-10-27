@@ -1,0 +1,47 @@
+[Unit]
+Description=Aster Coordinator (isolated coordination companion)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=aster-coordinator
+Group=aster-coordinator
+UMask=0077
+EnvironmentFile=/etc/aster-coordinator/service.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+WorkingDirectory=/var/lib/aster-coordinator
+StateDirectory=aster-coordinator
+StateDirectoryMode=0700
+ExecStartPre=/usr/bin/python3 /opt/aster-coordinator/operator.py validate --config /etc/aster-coordinator/service.env
+# The shared lock excludes a backup while the application is running.
+ExecStart=/usr/bin/flock --shared --nonblock --no-fork /var/lib/aster-coordinator/operator.lock /opt/aster-coordinator/venv/bin/python -m coordination.service
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGTERM
+MemoryHigh=384M
+MemoryMax=512M
+MemorySwapMax=0
+CPUQuota=50%
+TasksMax=64
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/aster-coordinator
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
