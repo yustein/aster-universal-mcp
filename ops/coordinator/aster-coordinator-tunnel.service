@@ -1,0 +1,31 @@
+[Unit]
+Description=Aster Coordinator Amsterdam Cloudflare Tunnel
+Wants=network-online.target
+After=network-online.target aster-coordinator.service
+
+[Service]
+Type=simple
+User=aster-coordinator-tunnel
+Group=aster-coordinator-tunnel
+UMask=0077
+ExecStart=/usr/local/bin/cloudflared tunnel --no-autoupdate --config /etc/aster-coordinator-tunnel/config.yml run
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+InaccessiblePaths=/opt/aster-pa /var/lib/aster-coordinator
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=192M
+MemorySwapMax=0
+CPUQuota=25%
+TasksMax=64
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
