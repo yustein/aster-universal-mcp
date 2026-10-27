@@ -539,6 +539,10 @@ class Store:
                 # Time may have advanced since the maintenance scan. Never
                 # return an executable claim whose deadline is already past.
                 _error("TASK_NOT_QUEUED", "Assignment deadline elapsed before claim.")
+            # BEGIN IMMEDIATE serializes this capacity check with other claims.
+            # Keep live idempotent retries above it and refused request IDs reusable.
+            if db.execute("SELECT 1 FROM coord_tasks WHERE receiver=? AND status='running' LIMIT 1", (aid,)).fetchone():
+                _error("WORKER_AT_CAPACITY", "Receiver already has a running assignment.")
             db.execute("INSERT INTO coord_claims VALUES (?,?,?,?)", (aid, request_id, digest, task["task_id"] if task else None))
             if not task:
                 return {"task": None}

@@ -113,6 +113,118 @@ def test_two_independent_database_connections_cannot_claim_same_task(state):
     assert "TASK_NOT_QUEUED" in results
 
 
+@pytest.mark.parametrize("explicit_task", [True, False])
+def test_worker_capacity_rejection_is_atomic_and_request_can_retry_after_completion(state, explicit_task):
+    store, now = state
+    first_task = assignment(store)
+    second_task = assignment(store, request="send-2")
+    first = claim(store, first_task)
+    reopened = Store(store.path, clock=lambda: now[0])
+    assert claim(reopened, first_task) == first  # Live replay still returns the exact lease.
+    with pytest.raises(CoordinationError, match="IDEMPOTENCY_CONFLICT"):
+        claim(reopened, second_task)  # Same request ID, different payload, even at capacity.
+    selected = second_task if explicit_task else None
+    before = [store.task_status("aster-client", task_id=t["task_id"])
+              for t in (first_task, second_task)]
+    events_before = store.events_after()
+    with sqlite3.connect(store.path) as db:
+        claims_before = db.execute("SELECT * FROM coord_claims").fetchall()
+    with pytest.raises(CoordinationError) as rejected:
+        claim(reopened, selected, request="claim-next")
+    assert rejected.value.code == "WORKER_AT_CAPACITY"
+    assert str(rejected.value) == "WORKER_AT_CAPACITY: Receiver already has a running assignment."
+    assert [store.task_status("aster-client", task_id=t["task_id"])
+            for t in (first_task, second_task)] == before
+    assert store.events_after() == events_before
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("SELECT * FROM coord_claims").fetchall() == claims_before
+    assert claim(reopened, first_task) == first
+    done = store.complete_task("claude-client", **credentials(first), result={"count": 3})
+    next_claim = claim(reopened, selected, request="claim-next")
+    assert next_claim["task"]["task_id"] == second_task["task_id"]
+    assert store.complete_task("claude-client", **credentials(first), result={"count": 3}) == done
+    with pytest.raises(CoordinationError, match="CLAIM_NO_LONGER_CURRENT"):
+        claim(reopened, first_task)
+
+
+def test_worker_capacity_serializes_distinct_tasks_across_store_connections(state):
+    store, now = state
+    tasks = [assignment(store, request=f"send-{i}") for i in range(2)]
+    other = Store(store.path, clock=lambda: now[0])
+    barrier = threading.Barrier(2)
+
+    def attempt(candidate, task, request):
+        barrier.wait(timeout=5)
+        try:
+            return claim(candidate, task, request=request)
+        except CoordinationError as error:
+            return error.code
+
+    with ThreadPoolExecutor(2) as pool:
+        futures = [pool.submit(attempt, candidate, task, f"claim-{i}")
+                   for i, (candidate, task) in enumerate(zip((store, other), tasks))]
+        results = [future.result(timeout=10) for future in futures]
+    assert sum(isinstance(result, dict) for result in results) == 1
+    assert "WORKER_AT_CAPACITY" in results
+    assert sorted(store.task_status("aster-client", task_id=t["task_id"])["status"]
+                  for t in tasks) == ["queued", "running"]
+    with sqlite3.connect(store.path) as db:
+        assert db.execute("SELECT count(*) FROM coord_claims").fetchone()[0] == 1
+    winner = next(result for result in results if isinstance(result, dict))
+    loser_index = results.index("WORKER_AT_CAPACITY")
+    store.complete_task("claude-client", **credentials(winner), result={"count": 3})
+    assert claim(other, tasks[loser_index], request=f"claim-{loser_index}")["task"]["status"] == "running"
+
+
+def test_worker_capacity_does_not_consume_empty_claim_or_override_prior_empty_replay(state):
+    store, _ = state
+    assert claim(store, request="empty-before") == {"task": None}
+    first = claim(store, assignment(store))
+    assert claim(store, request="empty-before") == {"task": None}
+    with pytest.raises(CoordinationError, match="WORKER_AT_CAPACITY"):
+        claim(store, request="empty-after")
+    second = assignment(store, request="send-2")
+    store.complete_task("claude-client", **credentials(first), result={"count": 3})
+    assert claim(store, request="empty-after")["task"]["task_id"] == second["task_id"]
+
+
+def test_worker_capacity_preserves_inaccessible_task_error(state):
+    store, _ = state
+    claim(store, assignment(store))
+    store.grant(sender="aster", receiver="outsider")
+    other_task = store.delegate_task("aster-client", to_agent="outsider", request_id="send-other",
+                                     instruction="Private work", expected_result="Reply")
+    with pytest.raises(CoordinationError, match="TASK_NOT_ACCESSIBLE"):
+        claim(store, other_task, request="wrong-receiver")
+
+
+def test_worker_capacity_is_independent_per_receiver(state):
+    store, _ = state
+    first = claim(store, assignment(store))
+    store.grant(sender="aster", receiver="outsider")
+    second = store.delegate_task("aster-client", to_agent="outsider", request_id="send-other",
+                                 instruction="Count entries.", expected_result="count=3")
+    other = store.claim_task("outsider-client", task_id=second["task_id"], request_id="claim-1")
+    assert first["task"]["status"] == other["task"]["status"] == "running"
+    assert claim(store, first["task"]) == first
+
+
+def test_worker_capacity_releases_on_expiry_without_reviving_original_claim(state):
+    store, now = state
+    first_task = assignment(store)
+    second_task = assignment(store, request="send-2")
+    first = claim(store, first_task, lease_seconds=15)
+    with pytest.raises(CoordinationError, match="WORKER_AT_CAPACITY"):
+        claim(store, second_task, request="claim-next")
+    now[0] += 15
+    assert claim(store, second_task, request="claim-next")["task"]["status"] == "running"
+    assert store.task_status("aster-client", task_id=first_task["task_id"])["status"] == "uncertain"
+    with pytest.raises(CoordinationError, match="CLAIM_NO_LONGER_CURRENT"):
+        claim(store, first_task, lease_seconds=15)
+    with pytest.raises(CoordinationError, match="STALE_LEASE"):
+        store.complete_task("claude-client", **credentials(first), result={"count": 3})
+
+
 def test_lost_claim_reply_recovers_exact_lease_and_cannot_claim_new_work(state):
     store, now = state
     task = assignment(store)
