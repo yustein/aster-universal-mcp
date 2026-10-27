@@ -16,7 +16,7 @@ class ResourceBoundMCPServer(MCPServer):
         app.add_middleware(TokenResourceBinding, resource=self._aster_token_resource)
         return app
 
-def build_oauth_server(*, db_path: str, origin: str, register_tools=None):
+def build_oauth_server(*, db_path: str, origin: str, register_tools=None, extensions=None):
     if not origin.startswith("https://") or origin.endswith("/"):
         raise ValueError("canonical HTTPS origin required")
     resource=origin+"/mcp"
@@ -29,7 +29,8 @@ def build_oauth_server(*, db_path: str, origin: str, register_tools=None):
         client_registration_options=ClientRegistrationOptions(enabled=True, valid_scopes=["system:admin"], default_scopes=["system:admin"]),
     )
     server=ResourceBoundMCPServer("Aster Universal MCP", token_resource=resource,
-                                 auth_server_provider=provider, auth=auth)
+                                 auth_server_provider=provider, auth=auth,
+                                 extensions=extensions)
     from approval_http import owner_approval_app
     approval = owner_approval_app(db_path)
     for route in approval.routes:
