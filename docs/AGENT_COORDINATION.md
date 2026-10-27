@@ -124,11 +124,19 @@ Use `--watch` only when you explicitly want a persistent polling worker:
 python -m coordination.worker --config /absolute/path/worker.json --watch
 ```
 
-Watch mode stops with exit code `2` when attention is required. Success or an empty
-inbox exits `0` in single-run mode. Interrupt exits `130`. The console prints only
+Watch mode stops with exit code `2` when attention is required. Single-run mode
+exits `0` on success or when an idle agent's fresh claim finds no queued task and
+returns `task: null`. Interrupt exits `130`. The console prints only
 a small status summary and receipt path, not the bearer token, lease or model
 output. Polling is a selected worker mode; native receiver failure does not
 silently enable it or schedule a ChatGPT fallback task.
+
+Normal workers keep one active assignment at a time. A fresh claim for an agent
+that already holds a running assignment raises `WORKER_AT_CAPACITY`, even when
+its queued inbox is empty. This follows the existing attention/error path (exit
+code `2`); the refused new request ID is not consumed. Identical valid retries of
+the current live claim still recover the same lease, and replays of a previously
+empty claim still return `task: null`; neither replay claims new work.
 
 Read `aster_task_status` from the sender. Check the fixture output against the
 expected fields. A sender can record actual checks through `aster_verify_result`
