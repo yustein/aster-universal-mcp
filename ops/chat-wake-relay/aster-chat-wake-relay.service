@@ -1,0 +1,40 @@
+[Unit]
+Description=Aster Chat Pro wake relay (trusted Firefox)
+Wants=network-online.target
+After=network-online.target display-manager.service
+
+[Service]
+Type=simple
+User=tony
+Group=tony
+Environment=ASTER_CHAT_WAKE_CONFIG=/home/tony/tools/aster-chat-wake-relay/config.json
+Environment=ASTER_CHAT_WAKE_STATE=/home/tony/.local/state/aster-chat-wake-relay/state.sqlite
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+ExecStart=/opt/aster-chat-wake-relay/venv/bin/python /home/tony/tools/aster-chat-wake-relay/relay.py
+Restart=on-failure
+RestartSec=15
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=false
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/tony/.local/state/aster-chat-wake-relay /tmp
+RestrictSUIDSGID=true
+RestrictRealtime=true
+LockPersonality=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+MemoryMax=384M
+MemorySwapMax=0
+CPUQuota=25%
+TasksMax=128
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
