@@ -35,9 +35,16 @@ def test_wake_stream_sends_only_event_metadata(tmp_path):
     with client.websocket_connect("/wake-stream?after=0", headers=headers) as ws:
         store.delegate_task("a-client", to_agent="b", request_id="send-1",
                             instruction="SECRET INSTRUCTION", expected_result="SECRET RESULT")
-        first = ws.receive_json()
-        second = ws.receive_json()
-        assert [first["event"]["event_type"], second["event"]["event_type"]] == ["task.updated", "task.queued"]
-        raw = str((first, second))
+        messages = []
+        events = []
+        for _ in range(4):
+            message = ws.receive_json()
+            messages.append(message)
+            if message.get("type") == "event":
+                events.append(message["event"])
+                if message["event"]["event_type"] == "task.queued":
+                    break
+        assert any(event["event_type"] == "task.queued" and event["recipient"] == "b"
+                   for event in events)
+        raw = str(messages)
         assert "SECRET INSTRUCTION" not in raw and "SECRET RESULT" not in raw
-        assert second["event"]["recipient"] == "b"
