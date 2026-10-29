@@ -18,6 +18,7 @@ from pathlib import Path
 import re
 import secrets
 import sqlite3
+import threading
 import time
 from typing import Callable
 
@@ -121,7 +122,8 @@ CREATE INDEX IF NOT EXISTS coord_event_recipient ON coord_events(recipient,seque
 
 
 class Store:
-    def __init__(self, path: str | Path, *, clock: Callable[[], float] = time.time):
+    def __init__(self, path: str | Path, *, clock: Callable[[], float] = time.time,
+                 event_notifier: Callable[[], None] | None = None):
         self.path = Path(path)
         if not self.path.is_absolute():
             _error("INVALID_CONFIGURATION", "Coordination database must use an absolute path.")
@@ -139,6 +141,8 @@ class Store:
         if os.name != "nt" and self.path.stat().st_mode & 0o077:
             _error("INVALID_CONFIGURATION", "Coordination database must be private to its operator.")
         self.clock = clock
+        self.event_notifier = event_notifier
+        self._transaction_state = threading.local()
         with closing(self._connect()) as db:
             existing = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")]
             if any(not name.startswith(("coord_", "sqlite_")) for name in existing):
@@ -164,15 +168,26 @@ class Store:
     @contextmanager
     def _transaction(self):
         db = self._connect()
+        self._transaction_state.event_pending = False
+        committed_event = False
         try:
             db.execute("BEGIN IMMEDIATE")
             yield db
             db.commit()
+            committed_event = bool(getattr(self._transaction_state, "event_pending", False))
         except BaseException:
             db.rollback()
             raise
         finally:
             db.close()
+            self._transaction_state.event_pending = False
+        if committed_event and self.event_notifier is not None:
+            try:
+                self.event_notifier()
+            except Exception:
+                # Durable task state must never fail because a best-effort
+                # in-process wake signal failed after commit.
+                pass
 
     def _now(self):
         now = float(self.clock())
@@ -235,6 +250,7 @@ class Store:
                    "sender": task["sender"], "receiver": task["receiver"]}
         db.execute("INSERT INTO coord_events(event_id,recipient,event_type,task_id,payload,created_at) VALUES (?,?,?,?,?,?)",
                    ("evt_" + secrets.token_hex(16), recipient, event_type, task["task_id"], _dump(payload), self._now()))
+        self._transaction_state.event_pending = True
 
     def _changed(self, db, task, *, queued=False):
         task["revision"] += 1

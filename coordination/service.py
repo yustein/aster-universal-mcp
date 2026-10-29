@@ -16,6 +16,7 @@ from proxy_security import PublicOriginGate
 from tool_access import current_client_access
 from .tools import register_coordination_tools
 from .panel import build_panel_app
+from .wake_stream import EventSignal, WakeStream
 
 
 def create_app():
@@ -31,6 +32,7 @@ def create_app():
     if len({path.resolve() for path in (oauth_db, coordination_db, allowlist)}) != 3:
         raise ValueError("coordination, OAuth and allowlist must be separate state files")
     stores = {}
+    wake_signal = EventSignal()
     panel, register_panel_tools = build_panel_app(lambda: stores["coordination"], allowlist_path=allowlist)
     def register(server):
         @server.tool()
@@ -41,7 +43,7 @@ def create_app():
                     "admin_approved": access.admin_approved, "service": "coordination_companion",
                     "machine_execution": False,
                     "next_step": "The local operator must approve this exact client and enroll it with coordination.cli; then call aster_profile."}
-        store = register_coordination_tools(server, db_path=str(coordination_db), allowlist_path=allowlist)
+        store = register_coordination_tools(server, db_path=str(coordination_db), allowlist_path=allowlist, event_notifier=wake_signal.notify)
         stores["coordination"] = store
         register_panel_tools(server)
         if native_flag == "1":
@@ -53,7 +55,13 @@ def create_app():
         stateless_http=True, json_response=True, host="127.0.0.1",
         transport_security=TransportSecuritySettings(
             allowed_hosts=[origin.removeprefix("https://")], allowed_origins=[origin]))
-    return OAuthHTTPDiagnostics(PublicOriginGate(app, public_origin=origin))
+    wrapped = OAuthHTTPDiagnostics(PublicOriginGate(app, public_origin=origin))
+    wake_secret = coordination_db.parent / "wake-relay.secret"
+    if wake_secret.exists():
+        wrapped = WakeStream(wrapped, store_getter=lambda: stores["coordination"],
+                             signal=wake_signal, secret_path=wake_secret,
+                             public_host=origin.removeprefix("https://"))
+    return wrapped
 
 
 def main():

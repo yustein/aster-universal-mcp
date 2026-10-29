@@ -16,7 +16,8 @@ from tool_access import current_client_access
 from .store import CoordinationError, Store
 
 
-def register_coordination_tools(server, *, db_path: str, allowlist_path: str | Path) -> Store:
+def register_coordination_tools(server, *, db_path: str, allowlist_path: str | Path,
+                                event_notifier=None) -> Store:
     """Register the opt-in surface and return its store for transport adapters.
 
     The existing administrative trust model is unchanged: these clients are
@@ -24,7 +25,8 @@ def register_coordination_tools(server, *, db_path: str, allowlist_path: str | P
     """
     if not isinstance(db_path, str) or not db_path or not Path(db_path).is_absolute():
         raise ValueError("ASTER_COORDINATION_DB must be an absolute database path")
-    store = Store(db_path)
+    store = (Store(db_path) if event_notifier is None
+             else Store(db_path, event_notifier=event_notifier))
 
     def invoke(method: str, **arguments) -> dict:
         # Read the current grant on every invocation, including read tools and

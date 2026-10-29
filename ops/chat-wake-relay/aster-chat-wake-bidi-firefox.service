@@ -1,0 +1,20 @@
+[Unit]
+Description=Aster Chat wake dedicated Firefox BiDi browser
+After=graphical-session.target network-online.target
+Wants=network-online.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/run/user/1000/gdm/Xauthority
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=MOZ_ENABLE_WAYLAND=0
+Environment=GDK_BACKEND=x11
+ExecStart=/usr/bin/firefox --no-remote -profile %h/snap/firefox/common/aster-chat-wake-relay-profile --remote-debugging-port 9229 https://chatgpt.com/
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=default.target
