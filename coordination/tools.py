@@ -25,7 +25,8 @@ def register_coordination_tools(server, *, db_path: str, allowlist_path: str | P
     """
     if not isinstance(db_path, str) or not db_path or not Path(db_path).is_absolute():
         raise ValueError("ASTER_COORDINATION_DB must be an absolute database path")
-    store = Store(db_path, event_notifier=event_notifier)
+    store = (Store(db_path) if event_notifier is None
+             else Store(db_path, event_notifier=event_notifier))
 
     def invoke(method: str, **arguments) -> dict:
         # Read the current grant on every invocation, including read tools and
