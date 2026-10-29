@@ -1,0 +1,19 @@
+{
+  "stream_url": "wss://coord.example.com/wake-stream",
+  "secret_file": "/home/USER/.config/aster-chat-wake-relay/secret",
+  "initial_cursor": 0,
+  "bidi_endpoint": "ws://127.0.0.1:9229/session",
+  "browser_service": "aster-chat-wake-bidi-firefox.service",
+  "routes": {
+    "MAIN_COORDINATOR_AGENT_ID": {
+      "role": "main",
+      "conversation_id": "MAIN_CHAT_CONVERSATION_ID",
+      "conversation_url": "CANONICAL_MAIN_CHAT_URL"
+    },
+    "CHAT_REVIEWER_AGENT_ID": {
+      "role": "worker",
+      "conversation_id": "REVIEWER_CHAT_CONVERSATION_ID",
+      "conversation_url": "CANONICAL_REVIEWER_CHAT_URL"
+    }
+  }
+}
