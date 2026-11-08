@@ -5,6 +5,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+REFRESH_TTL = 30 * 86400
+
 def digest(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -23,8 +25,8 @@ class RefreshStore:
         db.execute("PRAGMA busy_timeout=10000")
         return db
 
-    def issue(self,client_id: str,resource: str,scope: str,ttl: int=2592000,now: int|None=None)->str:
-        if not client_id or not resource.startswith("https://") or not scope or not 60<=ttl<=2592000:
+    def issue(self,client_id: str,resource: str,scope: str,ttl: int=REFRESH_TTL,now: int|None=None)->str:
+        if not client_id or not resource.startswith("https://") or not scope or not 60<=ttl<=REFRESH_TTL:
             raise ValueError("invalid refresh token parameters")
         token=secrets.token_urlsafe(48)
         now=int(time.time()) if now is None else now
@@ -50,6 +52,31 @@ class RefreshStore:
                 RETURNING client_id,resource,scope,expires_at""",
                 (digest(token),client_id,now)).fetchone()
         return dict(zip(("client_id","resource","scope","expires_at"),row)) if row else None
+
+    def rotate(self, token: str, client_id: str, resource: str, scope: str,
+               *, access_ttl: int) -> tuple[str, str] | None:
+        """Commit consumption and both replacements as one durable exchange."""
+        access = secrets.token_urlsafe(48)
+        replacement = secrets.token_urlsafe(48)
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            now = int(time.time())
+            consumed = db.execute(
+                """UPDATE refresh_tokens SET used=1
+                   WHERE digest=? AND client_id=? AND resource=? AND used=0 AND expires_at>?
+                     AND EXISTS (SELECT 1 FROM oauth_clients WHERE client_id=? AND revoked=0)
+                   RETURNING scope""",
+                (digest(token), client_id, resource, now, client_id),
+            ).fetchone()
+            if consumed is None:
+                return None
+            if not set(scope.split()).issubset(consumed[0].split()):
+                raise PermissionError("scope escalation rejected")
+            db.execute("INSERT INTO access_tokens VALUES (?,?,?,?,?,0)",
+                       (digest(access), client_id, resource, scope, now+access_ttl))
+            db.execute("INSERT INTO refresh_tokens VALUES (?,?,?,?,?,0)",
+                       (digest(replacement), client_id, resource, scope, now+REFRESH_TTL))
+        return access, replacement
 
     def revoke_client(self,client_id: str)->None:
         with self._db() as db:

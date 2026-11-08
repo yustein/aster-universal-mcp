@@ -1,4 +1,5 @@
 """OAuth provider integrating owner-approved grants with the MCP SDK contract."""
+import asyncio
 import time
 import hashlib
 import sqlite3
@@ -11,7 +12,7 @@ from oauth_codes import AuthorizationCodeStore
 from token_store import TokenStore
 from sdk_auth_codes import SDKAuthorizationCodes
 from refresh_store import RefreshStore
-from mcp.server.auth.provider import RefreshToken
+from mcp.server.auth.provider import RefreshToken, TokenError
 
 class LocalOAuthProvider:
     def __init__(self, db_path: str, *, issuer: str, resource: str):
@@ -119,14 +120,17 @@ class LocalOAuthProvider:
         requested = scopes or refresh_token.scopes
         if not set(requested).issubset(set(refresh_token.scopes)):
             raise PermissionError("scope escalation rejected")
-        record = self.refresh.consume(refresh_token.token, client.client_id)
-        if record is None or record["resource"] != self.resource:
-            raise PermissionError("refresh token invalid or replayed")
-        access = self.tokens.issue(client_id=client.client_id, resource=self.resource,
-                                   scope=" ".join(requested), ttl=900)
-        replacement = self.refresh.issue(client.client_id, self.resource, " ".join(requested))
-        return OAuthToken(access_token=access, token_type="Bearer", expires_in=900,
-                          scope=" ".join(requested), refresh_token=replacement)
+        scope = " ".join(requested)
+        ttl = 900
+        rotated = await asyncio.to_thread(
+            self.refresh.rotate, refresh_token.token, client.client_id,
+            self.resource, scope, access_ttl=ttl,
+        )
+        if rotated is None:
+            raise TokenError("invalid_grant", "refresh token invalid or replayed")
+        access, replacement = rotated
+        return OAuthToken(access_token=access, token_type="Bearer", expires_in=ttl,
+                          scope=scope, refresh_token=replacement)
 
     async def load_access_token(self, token: str) -> AccessToken | None:
         client_id = self.tokens.validate(token, resource=self.resource, scope="system:admin")
